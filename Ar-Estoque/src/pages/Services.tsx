@@ -559,19 +559,23 @@ function ServiceForm({
                         <div key={task.id ?? `${appliance.id}-service-${taskIndex}`} className="motion-item grid grid-cols-12 items-end gap-2 rounded-lg bg-slate-50 p-2">
                           <div className="col-span-12 sm:col-span-7">
                             <label className="mb-1 block text-xs font-medium text-slate-600">Tipo de serviço</label>
-                            <select
-                              value={task.service_type_id ?? ''}
-                              disabled={legacy}
-                              onChange={e => updateTask(applianceIndex, taskIndex, 'service_type_id', e.target.value)}
-                              className="w-full rounded border border-slate-300 px-2 py-2 text-sm"
-                            >
-                              {legacy ? <option value="">Registro anterior: {task.name_snapshot}</option> : <option value="">Selecione...</option>}
-                              {serviceTypes.filter(type => type.is_active || type.id === task.service_type_id).map(type => (
-                                <option key={type.id} value={type.id} disabled={!type.is_active}>
-                                  {type.name}{type.is_active ? '' : ' (inativo)'}
-                                </option>
-                              ))}
-                            </select>
+                            {legacy ? (
+                              <div className="w-full rounded border border-slate-300 bg-slate-100 px-2 py-2 text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                Registro anterior: {task.name_snapshot}
+                              </div>
+                            ) : (
+                              <SearchableSelect
+                                value={task.service_type_id ?? ''}
+                                placeholder="Selecione..."
+                                className="[&_input]:rounded [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm"
+                                onChange={value => updateTask(applianceIndex, taskIndex, 'service_type_id', value)}
+                                options={serviceTypes.filter(type => type.is_active || type.id === task.service_type_id).map(type => ({
+                                  value: type.id,
+                                  label: `${type.name}${type.is_active ? '' : ' (inativo)'}`,
+                                  disabled: !type.is_active,
+                                }))}
+                              />
+                            )}
                           </div>
 
                           <div className="col-span-10 sm:col-span-4">
