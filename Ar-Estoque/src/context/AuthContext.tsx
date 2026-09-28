@@ -47,6 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const revision = useRef(0);
+  const authEventRevision = useRef(0);
+  const sessionUserId = useRef<string | null>(null);
   const dayLogoutInProgress = useRef(false);
   const sessionDay = useRef<string | null>(null);
 
@@ -78,21 +80,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, next) => {
       if (!active) return;
-      if (event === 'SIGNED_IN' && next) {
+      // getSession() owns startup restoration so the stored login day is checked
+      // before a restored session can render protected pages.
+      if (event === 'INITIAL_SESSION') return;
+
+      authEventRevision.current++;
+      const nextUserId = next?.user.id ?? null;
+      const userChanged = sessionUserId.current !== nextUserId;
+      sessionUserId.current = nextUserId;
+
+      if (event === 'SIGNED_IN' && next && userChanged) {
         sessionDay.current = todayLocal();
         writeSessionDay(sessionDay.current);
+      } else if (next && userChanged) {
+        const currentDay = todayLocal();
+        const savedDay = readSessionDay();
+        if (hasLocalDayChanged(savedDay, currentDay)) {
+          void signOutForNewDay();
+          return;
+        }
+        sessionDay.current = savedDay || currentDay;
+        if (!savedDay) writeSessionDay(currentDay);
       }
-      if (event === 'SIGNED_OUT') {
+      if (!next || event === 'SIGNED_OUT') {
         sessionDay.current = null;
         clearSessionDay();
+        setProfile(null);
+        setProfileError(null);
+        setLoading(false);
+      } else if (userChanged) {
+        setProfile(null);
+        setProfileError(null);
+        setLoading(true);
       }
+
+      // Token refreshes and other same-user auth events update credentials
+      // without unmounting the active page or discarding its local state.
       setSession(next);
-      setProfile(null);
-      setLoading(!!next);
     });
 
+    const startingAuthRevision = authEventRevision.current;
     supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return;
+      if (authEventRevision.current !== startingAuthRevision) return;
       if (error) setProfileError(error.message);
 
       const restoredSession = data.session;
@@ -107,6 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Keep the local app signed out without surfacing a startup error.
           } finally {
             if (active) {
+              sessionUserId.current = null;
               setSession(null);
               setProfile(null);
               setLoading(false);
@@ -117,16 +148,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Existing sessions created before daily expiry are treated as starting today.
         sessionDay.current = savedDay || currentDay;
         if (!savedDay) writeSessionDay(currentDay);
+        sessionUserId.current = restoredSession.user.id;
       } else {
         sessionDay.current = null;
+        sessionUserId.current = null;
         clearSessionDay();
       }
 
       if (!active) return;
+      if (authEventRevision.current !== startingAuthRevision) return;
       setSession(restoredSession);
       if (!restoredSession) setLoading(false);
     }).catch(error => {
       if (!active) return;
+      if (authEventRevision.current !== startingAuthRevision) return;
       setProfileError(errorMessage(error));
       setLoading(false);
     });
@@ -135,10 +170,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [signOutForNewDay]);
+
+  const sessionUserIdValue = session?.user.id ?? null;
 
   useEffect(() => {
-    if (!session) return;
+    if (!sessionUserIdValue) return;
 
     let timer: number | undefined;
     const checkSessionDay = () => {
@@ -165,11 +202,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', checkOnReturn);
       document.removeEventListener('visibilitychange', checkOnReturn);
     };
-  }, [session, signOutForNewDay]);
+  }, [sessionUserIdValue, signOutForNewDay]);
 
   const reloadProfile = useCallback(async () => {
     const current = ++revision.current;
-    if (!session) {
+    if (!sessionUserIdValue) {
       setProfile(null);
       setLoading(false);
       return;
@@ -177,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setProfileError(null);
     try {
-      const { data, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', sessionUserIdValue).maybeSingle();
       if (error) throw error;
       if (current === revision.current) {
         setProfile(data);
@@ -188,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       if (current === revision.current) setLoading(false);
     }
-  }, [session]);
+  }, [sessionUserIdValue]);
 
   useEffect(() => {
     const currentRevision = revision;
