@@ -3,6 +3,7 @@ import { allRows } from '@/lib/data';
 import { operationId } from '@/lib/utils';
 import { todayLocal } from '@/lib/utils';
 import { errorMessage } from '@/lib/utils';
+import { SearchableSelect } from '@/components/SearchableSelect';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, type Service, type Client, type Product, type Unit, type ServiceMaterial, type ServiceAppliance, type PerformedService, type ServiceType } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -275,7 +276,6 @@ function ServiceForm({
   const [products, setProducts] = useState<Product[]>([]);
   const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
   const [appliances, setAppliances] = useState<ApplianceDraft[]>(() => [newAppliance()]);
-  const [editingApplianceCount, setEditingApplianceCount] = useState(false);
   const [applianceCountInput, setApplianceCountInput] = useState('1');
   const [form, setForm] = useState({
     client_id: service?.client_id ?? '',
@@ -352,12 +352,21 @@ function ServiceForm({
     if (!Number.isInteger(count) || count < 1) return;
     if (count < appliances.length) {
       const removed = appliances.slice(count);
-      if (removed.some(applianceHasData) && !(await dialogConfirm('Os aparelhos removidos têm informações preenchidas. Deseja removê-los e todos os seus serviços, materiais e observações?'))) return;
-      setAppliances(appliances.slice(0, count));
-    } else if (count > appliances.length) {
-      setAppliances([...appliances, ...Array.from({ length: count - appliances.length }, newAppliance)]);
+      const filledAppliances = removed.map((appliance, index) => applianceHasData(appliance) ? count + index + 1 : null).filter((number): number is number => number !== null);
+      if (filledAppliances.length && !await dialogConfirm(
+        `Os aparelhos ${filledAppliances.join(', ')} que serão removidos possuem informações preenchidas. Seus serviços, materiais e observações também serão removidos desta edição.`,
+        { title: 'Remover aparelhos?', confirmLabel: 'Remover aparelhos', destructive: true },
+      )) {
+        setApplianceCountInput(String(appliances.length));
+        return;
+      }
     }
 
+    setAppliances(current => count < current.length
+      ? current.slice(0, count)
+      : count > current.length
+        ? [...current, ...Array.from({ length: count - current.length }, newAppliance)]
+        : current);
     setApplianceCountInput(String(count));
   }
 
@@ -469,10 +478,16 @@ function ServiceForm({
         {!ready && !loadError && <LoadingSpinner />}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select label="Cliente *" value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} required>
-            <option value="">Selecione...</option>
-            {clients.filter(c => !c.archived_at || c.id === service?.client_id).map((c) => <option key={c.id} value={c.id}>{c.name}{c.archived_at ? ' (Arquivado — atendimento existente)' : ''}</option>)}
-          </Select>
+          <SearchableSelect
+            label="Cliente *"
+            value={form.client_id}
+            onChange={client_id => setForm(current => ({ ...current, client_id }))}
+            required
+            options={clients.filter(c => !c.archived_at || c.id === service?.client_id).map(c => ({
+              value: c.id,
+              label: `${c.name}${c.archived_at ? ' (Arquivado — atendimento existente)' : ''}`,
+            }))}
+          />
           <Input label="Data do Serviço" type="date" value={form.service_date} onChange={(e) => setForm({ ...form, service_date: e.target.value })} />
         </div>
 
@@ -497,18 +512,13 @@ function ServiceForm({
             inputMode="numeric"
             value={applianceCountInput}
             required
-            readOnly={appliances.some(applianceHasData) && !editingApplianceCount}
             onChange={e => {
               const value = e.target.value.replace(/\D/g, '');
               setApplianceCountInput(value);
-
-              if (
-                (!appliances.some(applianceHasData) || editingApplianceCount) &&
-                value !== ''
-              ) {
+              if (value !== '') {
                 const count = Number(value);
                 if (Number.isInteger(count) && count > 0) {
-                  setApplianceCount(count);
+                  void setApplianceCount(count);
                 }
               }
             }}
@@ -518,33 +528,6 @@ function ServiceForm({
               }
             }}
           />
-
-          {appliances.some(applianceHasData) && !editingApplianceCount && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="mt-2"
-              onClick={async () => {
-                if (await dialogConfirm('Alterar a quantidade pode adicionar ou remover aparelhos. Os aparelhos existentes serão preservados; a remoção de aparelhos preenchidos exigirá nova confirmação. Deseja continuar?')) {
-                  setEditingApplianceCount(true);
-                }
-              }}
-            >
-              Alterar quantidade de aparelhos
-            </Button>
-          )}
-
-          {editingApplianceCount && (
-            <div className="mt-2 space-y-2">
-              <p className="text-xs text-amber-700">
-                Aparelhos existentes serão preservados. Ao reduzir, será solicitada confirmação se houver dados nos aparelhos removidos.
-              </p>
-              <Button type="button" size="sm" variant="secondary" onClick={() => setEditingApplianceCount(false)}>
-                Concluir alteração
-              </Button>
-            </div>
-          )}
         </div>
 
         <div className="space-y-4">
@@ -635,10 +618,16 @@ function ServiceForm({
                       <div key={m.id || `${appliance.id}-material-${materialIndex}`} className="motion-item grid grid-cols-12 items-start gap-2 rounded-lg bg-slate-50 p-2">
                         <div className="col-span-12 sm:col-span-4">
                           <label className="mb-1 block min-h-6 text-[10px] leading-3 text-slate-500 sm:text-[11px]">Material</label>
-                          <select value={m.product_id} onChange={e => updateMaterial(applianceIndex, materialIndex, 'product_id', e.target.value)} className="w-full rounded border border-slate-300 px-2 py-1.5 text-xs">
-                            <option value="">Produto...</option>
-                            {products.filter(p => p.is_active || appliance.materials.some(item => item.product_id === p.id)).map(p => <option key={p.id} value={p.id}>{p.code} - {p.name}</option>)}
-                          </select>
+                          <SearchableSelect
+                            value={m.product_id}
+                            placeholder="Produto..."
+                            className="text-xs [&_input]:rounded [&_input]:px-2 [&_input]:py-1.5 [&_input]:text-xs"
+                            onChange={product_id => updateMaterial(applianceIndex, materialIndex, 'product_id', product_id)}
+                            options={products.filter(p => p.is_active || appliance.materials.some(item => item.product_id === p.id)).map(p => ({
+                              value: p.id,
+                              label: `${p.code} - ${p.name}`,
+                            }))}
+                          />
                         </div>
 
                         <div className="col-span-3 sm:col-span-2">
