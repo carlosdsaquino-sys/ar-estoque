@@ -12,6 +12,7 @@ import Services from '@/pages/Services';
 import ServiceTypes from '@/pages/ServiceTypes';
 import Reports, { ProfitReport } from '@/pages/Reports';
 import Import from '@/pages/Import';
+import Cash from '@/pages/Cash';
 import { LoadingSpinner } from '@/components/ui';
 import { DialogProvider } from '@/components/DialogProvider';
 import { ThemeProvider } from '@/context/ThemeContext';
@@ -47,6 +48,7 @@ function AppContent() {
       {page === 'service-types' && <ServiceTypes />}
       {page === 'clients' && <Clients />}
       {page === 'services' && <Services />}
+      {page === 'cash' && <Cash />}
       {page === 'reports' && <Reports mode="general" />}
       {page === 'report-movements' && <Reports mode="movements" />}
       {page === 'profit-report' && <ProfitReport />}

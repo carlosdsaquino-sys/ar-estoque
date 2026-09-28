@@ -188,7 +188,7 @@ export default function Services() {
                       )}
                       {s.payment_status === 'pago' && profile?.role === 'admin' && (
                         <button className="text-xs text-orange-700" onClick={async () => {
-                          const reason = await dialogPrompt('Justifique a correção do pagamento. Isso marca o serviço como pendente; não executa reembolso bancário.');
+                          const reason = await dialogPrompt('Justifique a correção do pagamento. O pagamento será marcado como pendente e uma saída de estorno será registrada no caixa aberto. Isso não executa um reembolso bancário.');
                           if (!reason?.trim()) return;
                           const { error } = await supabase.rpc('reverse_payment', { p_service_id: s.id, p_reason: reason });
                           if (error) dialogAlert(error.message); else loadServices();
@@ -1082,6 +1082,7 @@ function PaymentModal({ service, onClose, onPaid }: { service: Service; onClose:
           <p className="text-sm text-slate-500">Valor a receber</p>
           <p className="text-xl font-bold text-slate-900">{formatCurrency(service.total_value)}</p>
         </div>
+        <p className="text-xs text-slate-500">O recebimento será lançado automaticamente no caixa aberto. Abra o caixa antes de confirmar o pagamento.</p>
         <Input label="Data do Pagamento" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
         <Select label="Forma de Pagamento" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
           <option value="pix">Pix</option>

@@ -123,18 +123,33 @@ export default function Products() {
     loadProducts();
   }
 
-  async function handleDelete(p: Product) {
-    if (!await dialogConfirm(`Excluir o produto "${p.name}"? A exclusão só será possível se ele não tiver histórico.`)) return;
+  async function handleDelete(p: ProductWithBalance) {
+    const [movementCount, materialCount, stock] = await Promise.all([
+      supabase.from('movements').select('id', { count: 'exact', head: true }).eq('product_id', p.id),
+      supabase.from('service_materials').select('id', { count: 'exact', head: true }).eq('product_id', p.id),
+      supabase.rpc('get_product_balance', { p_product_id: p.id }),
+    ]);
+    if (movementCount.error || materialCount.error || stock.error) {
+      dialogAlert('Não foi possível verificar os registros relacionados ao produto. Nenhuma alteração foi feita.');
+      return;
+    }
+
+    const hasHistory = (movementCount.count ?? 0) > 0 || (materialCount.count ?? 0) > 0;
+    const currentBalance = Number(stock.data ?? 0);
+    const stockMessage = currentBalance !== 0
+      ? `\n\nEste produto também possui estoque atual: ${formatNumber(currentBalance)} ${p.unit?.name ?? 'unidades'}. O saldo será removido junto com o produto.`
+      : '';
+    const historyMessage = hasHistory
+      ? `\n\nAtenção: este produto possui histórico de movimentações e/ou serviços.\nMovimentações: ${movementCount.count ?? 0}\nMateriais utilizados em serviços: ${materialCount.count ?? 0}.\n\nSe você continuar, o produto e os registros relacionados a ele serão apagados.`
+      : `\n\nO produto será removido permanentemente.`;
+    const confirmed = await dialogConfirm(
+      `Todos os registros relacionados a este produto serão apagados.\n\nProduto: ${p.name}${historyMessage}${stockMessage}\n\nEssa ação não pode ser desfeita.`,
+      { title: 'Excluir produto permanentemente?', confirmLabel: 'Excluir permanentemente', cancelLabel: 'Cancelar', destructive: true },
+    );
+    if (!confirmed) return;
+
     const { error } = await supabase.rpc('delete_product', { p_product_id: p.id });
     if (error) {
-      if (/histórico|historico/i.test(error.message)) {
-        if (p.is_active && await dialogConfirm(`Este produto possui histórico em movimentações ou serviços e não pode ser excluído. Deseja inativar "${p.name}"?`)) {
-          await handleToggleActive(p);
-        } else if (!p.is_active) {
-          dialogAlert('Este produto possui histórico e já está inativo. O histórico foi preservado.');
-        }
-        return;
-      }
       dialogAlert('Erro: ' + error.message);
       return;
     }

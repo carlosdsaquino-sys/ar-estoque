@@ -1,5 +1,4 @@
 import { dialogAlert, dialogConfirm } from '@/components/DialogProvider';
-import { allRows } from '@/lib/data';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase, type ServiceType } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -11,7 +10,6 @@ export default function ServiceTypes() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const [types, setTypes] = useState<ServiceType[]>([]);
-  const [typesWithHistory, setTypesWithHistory] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ServiceType | null>(null);
@@ -21,15 +19,9 @@ export default function ServiceTypes() {
     setLoading(true);
     setError(null);
     try {
-      const [typeResult, historyRows] = await Promise.all([
-        supabase.from('service_types').select('*').order('name'),
-        allRows<{ id: string; service_type_id: string | null }>(() =>
-          supabase.from('performed_services').select('id,service_type_id').not('service_type_id', 'is', null).order('id')
-        ),
-      ]);
+      const typeResult = await supabase.from('service_types').select('*').order('name');
       if (typeResult.error) throw typeResult.error;
       setTypes((typeResult.data ?? []) as ServiceType[]);
-      setTypesWithHistory(new Set(historyRows.map(row => row.service_type_id).filter((id): id is string => Boolean(id))));
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -43,36 +35,27 @@ export default function ServiceTypes() {
     await setActive(type, !type.is_active);
   }
 
-  async function setActive(type: ServiceType, isActive: boolean, announce = false) {
+  async function setActive(type: ServiceType, isActive: boolean) {
     const { error: updateError } = await supabase.from('service_types').update({ is_active: isActive, updated_at: new Date().toISOString() }).eq('id', type.id);
     if (updateError) { dialogAlert('Erro: ' + updateError.message); return; }
     await load();
-    if (announce) dialogAlert('Tipo de serviço inativado com sucesso.');
   }
 
   async function deleteType(type: ServiceType) {
     const confirmed = await dialogConfirm(
-      `Tem certeza que deseja excluir "${type.name}"?`,
-      { title: 'Excluir tipo de serviço?', confirmLabel: 'Excluir', cancelLabel: 'Cancelar', destructive: true }
+      `ATENÇÃO: esta ação é irreversível.\n\nEste tipo de serviço já pode estar associado a atendimentos existentes.\n\nO cadastro do tipo de serviço será excluído permanentemente.\n\nO histórico dos atendimentos que já utilizaram este serviço será preservado.\n\nTipo: "${type.name}"\n\nEsta ação não pode ser desfeita.`,
+      { title: 'Excluir tipo de serviço permanentemente?', confirmLabel: 'Excluir permanentemente', cancelLabel: 'Cancelar', destructive: true }
     );
     if (!confirmed) return;
 
     const { error: deleteError } = await supabase.rpc('delete_service_type', { p_service_type_id: type.id });
     if (deleteError) {
-      if (/já foi utilizado|ja foi utilizado|histórico|historico/i.test(deleteError.message)) {
-        const inactivate = await dialogConfirm(
-          'Este tipo de serviço já foi utilizado em atendimentos e não pode ser excluído para preservar o histórico. Deseja inativá-lo?',
-          { title: 'Tipo de serviço em uso', confirmLabel: 'Inativar', cancelLabel: 'Cancelar' }
-        );
-        if (inactivate) await setActive(type, false, true);
-        return;
-      }
       dialogAlert('Não foi possível excluir o tipo de serviço: ' + deleteError.message);
       return;
     }
 
     await load();
-    dialogAlert('Tipo de serviço excluído com sucesso.');
+    dialogAlert('Tipo de serviço excluído permanentemente.');
   }
 
   if (loading) return <LoadingSpinner label="Carregando tipos de serviço..." />;
@@ -100,7 +83,7 @@ export default function ServiceTypes() {
               {isAdmin && <div className="flex items-center gap-1">
                 <button type="button" onClick={() => { setEditing(type); setShowForm(true); }} className="rounded-lg p-2 text-slate-400 transition hover:bg-sky-50 hover:text-sky-600" aria-label={`Editar ${type.name}`} title="Editar"><Pencil className="h-4 w-4" /></button>
                 <button type="button" onClick={() => void toggleActive(type)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label={type.is_active ? `Inativar ${type.name}` : `Ativar ${type.name}`} title={type.is_active ? 'Inativar' : 'Ativar'}><Power className="h-4 w-4" /></button>
-                {!typesWithHistory.has(type.id) && <button type="button" onClick={() => void deleteType(type)} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" aria-label={`Excluir ${type.name}`} title="Excluir"><Trash2 className="h-4 w-4" /></button>}
+                <button type="button" onClick={() => void deleteType(type)} className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30" aria-label={`Excluir ${type.name}`} title="Excluir"><Trash2 className="h-4 w-4" /></button>
               </div>}
             </div>
           ))}

@@ -8,6 +8,7 @@ import {
   Users,
   Wrench,
   FileBarChart,
+  Banknote,
   Upload,
   LogOut,
   Menu,
@@ -27,6 +28,7 @@ export type PageId =
   | 'service-types'
   | 'clients'
   | 'services'
+  | 'cash'
   | 'reports'
   | 'report-movements'
   | 'profit-report'
@@ -45,6 +47,7 @@ const items: {
   { id: 'service-types', label: 'Tipos de serviço', icon: Wrench },
   { id: 'clients', label: 'Clientes', icon: Users },
   { id: 'services', label: 'Serviços', icon: Wrench },
+  { id: 'cash', label: 'Caixa', icon: Banknote },
   { id: 'reports', label: 'Relatórios', icon: FileBarChart },
   { id: 'import', label: 'Importar planilha', icon: Upload, adminOnly: true },
   { id: 'users', label: 'Usuários', icon: Shield, adminOnly: true },
@@ -399,7 +402,7 @@ export default function Layout({
                   item.id !== 'dashboard' &&
                   !stockPages.includes(item.id) &&
                   !reportPages.includes(item.id) &&
-                  (item.id === 'clients' || item.id === 'services')
+                  (item.id === 'clients' || item.id === 'services' || item.id === 'cash')
               )
               .map(item => navButton(item))}
 
