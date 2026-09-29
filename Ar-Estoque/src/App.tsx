@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { configurationMissing } from '@/lib/supabase';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import Layout, { type PageId } from '@/components/AppLayout';
@@ -16,10 +16,25 @@ import Cash from '@/pages/Cash';
 import { LoadingSpinner } from '@/components/ui';
 import { DialogProvider } from '@/components/DialogProvider';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { pageForLocation, routeForPage } from '@/lib/routes';
 
 function AppContent() {
   const { session, profile, loading, profileError, reloadProfile, signOut } = useAuth();
-  const [page, setPage] = useState<PageId>('dashboard');
+  const [page, setPage] = useState<PageId>(() => pageForLocation(window.location.pathname, window.history.state) as PageId);
+
+  useEffect(() => {
+    const restorePage = () => setPage(pageForLocation(window.location.pathname, window.history.state) as PageId);
+    window.addEventListener('popstate', restorePage);
+    return () => window.removeEventListener('popstate', restorePage);
+  }, []);
+
+  function navigate(pageId: PageId) {
+    if (pageId === page) return;
+    const nextPath = routeForPage(pageId) ?? '/';
+    const existingState = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
+    window.history.pushState({ ...existingState, arEstoquePage: pageId }, '', nextPath);
+    setPage(pageId);
+  }
 
   if (loading) {
     return (
@@ -40,7 +55,7 @@ function AppContent() {
     <button onClick={signOut}>Sair</button>
   </div>;
   return (
-    <Layout current={page} onNavigate={setPage}>
+    <Layout current={page} onNavigate={navigate}>
       {page === 'users' && profile.role === 'admin' && <UsersPage />}
       {page === 'dashboard' && <Dashboard />}
       {page === 'products' && <Products />}

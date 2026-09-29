@@ -1,0 +1,11 @@
+{
+  "rewrites": [
+    { "source": "/estoque/produtos", "destination": "/index.html" },
+    { "source": "/estoque/movimentacoes", "destination": "/index.html" },
+    { "source": "/estoque/tipos-de-servico", "destination": "/index.html" },
+    { "source": "/estoque/importar", "destination": "/index.html" },
+    { "source": "/relatorios", "destination": "/index.html" },
+    { "source": "/relatorios/movimentacoes", "destination": "/index.html" },
+    { "source": "/relatorios/lucros", "destination": "/index.html" }
+  ]
+}

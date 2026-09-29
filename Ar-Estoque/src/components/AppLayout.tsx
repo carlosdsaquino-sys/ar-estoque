@@ -20,6 +20,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
+import { routeForPage } from '@/lib/routes';
 
 export type PageId =
   | 'dashboard'
@@ -167,14 +168,8 @@ export default function Layout({
   ) {
     const Icon = item.icon;
     const active = current === item.id;
-
-    return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => navigate(item.id)}
-        aria-current={active ? 'page' : undefined}
-        className={`
+    const href = routeForPage(item.id);
+    const className = `
           ${focusStyle}
           group
           flex
@@ -202,8 +197,8 @@ export default function Layout({
                 hover:text-white
               `
           }
-        `}
-      >
+        `;
+    const contents = <>
         {compact && (
           <Icon
             className={`
@@ -220,6 +215,29 @@ export default function Layout({
         )}
 
         {item.label}
+      </>;
+
+    if (href) {
+      return (
+        <a
+          key={item.id}
+          href={href}
+          onClick={event => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            navigate(item.id);
+          }}
+          aria-current={active ? 'page' : undefined}
+          className={className}
+        >
+          {contents}
+        </a>
+      );
+    }
+
+    return (
+      <button key={item.id} type="button" onClick={() => navigate(item.id)} aria-current={active ? 'page' : undefined} className={className}>
+        {contents}
       </button>
     );
   }
