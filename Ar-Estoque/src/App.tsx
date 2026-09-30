@@ -13,10 +13,13 @@ import ServiceTypes from '@/pages/ServiceTypes';
 import Reports, { ProfitReport } from '@/pages/Reports';
 import Import from '@/pages/Import';
 import Cash from '@/pages/Cash';
+import Maintenance from '@/pages/Maintenance';
 import { LoadingSpinner } from '@/components/ui';
 import { DialogProvider } from '@/components/DialogProvider';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { pageForLocation, routeForPage } from '@/lib/routes';
+import { MaintenanceProvider } from '@/context/MaintenanceContext';
+import { MaintenancePopup } from '@/pages/Maintenance';
 
 function AppContent() {
   const { session, profile, loading, profileError, reloadProfile, signOut } = useAuth();
@@ -55,6 +58,7 @@ function AppContent() {
     <button onClick={signOut}>Sair</button>
   </div>;
   return (
+    <>
     <Layout current={page} onNavigate={navigate}>
       {page === 'users' && profile.role === 'admin' && <UsersPage />}
       {page === 'dashboard' && <Dashboard />}
@@ -68,7 +72,10 @@ function AppContent() {
       {page === 'report-movements' && <Reports mode="movements" />}
       {page === 'profit-report' && <ProfitReport />}
       {page === 'import' && <Import />}
+      {page === 'maintenance-alerts' && <Maintenance onNavigate={navigate} />}
     </Layout>
+    <MaintenancePopup userId={profile.id} onNavigate={navigate} />
+    </>
   );
 }
 
@@ -78,7 +85,9 @@ function App() {
     <ThemeProvider>
       <DialogProvider>
         <AuthProvider>
-          <AppContent />
+          <MaintenanceProvider>
+            <AppContent />
+          </MaintenanceProvider>
         </AuthProvider>
       </DialogProvider>
     </ThemeProvider>

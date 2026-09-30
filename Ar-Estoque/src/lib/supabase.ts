@@ -136,6 +136,20 @@ export interface ServiceType {
   description: string;
   default_price: number;
   is_active: boolean;
+  maintenance_enabled: boolean;
+  maintenance_interval_months: number | null;
+  maintenance_alert_days: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientAppliance {
+  id: string;
+  client_id: string;
+  name: string;
+  description: string;
+  location: string;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -145,6 +159,8 @@ export interface ServiceAppliance {
   service_id: string;
   appliance_number: number;
   notes: string;
+  client_appliance_id: string | null;
+  client_appliance?: ClientAppliance | null;
   created_at: string;
 }
 
@@ -155,7 +171,24 @@ export interface PerformedService {
   name_snapshot: string;
   description_snapshot: string;
   unit_price: number;
+  maintenance_enabled_snapshot: boolean;
+  maintenance_interval_months_snapshot: number | null;
+  maintenance_alert_days_snapshot: number;
   created_at: string;
+}
+
+export interface MaintenanceOverviewItem {
+  client_appliance_id: string;
+  client_id: string;
+  client_name: string;
+  appliance_name: string;
+  appliance_description: string;
+  appliance_location: string;
+  last_maintenance_date: string;
+  next_maintenance_date: string;
+  interval_months: number;
+  alert_days: number;
+  days_until: number;
 }
 
 export interface ServiceHistory {

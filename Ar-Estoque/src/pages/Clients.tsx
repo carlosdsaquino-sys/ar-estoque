@@ -1,9 +1,10 @@
 import { dialogAlert, dialogConfirm } from '@/components/DialogProvider';
 import { allRows } from '@/lib/data';
 import { useAuth } from '@/context/AuthContext';
+import { notifyMaintenanceDataChanged } from '@/lib/maintenance';
 import { errorMessage } from '@/lib/utils';
 import { useEffect, useState, useCallback } from 'react';
-import { supabase, type Client, type Service, type ServiceMaterial, type ServiceAppliance, type PerformedService, type Product } from '@/lib/supabase';
+import { supabase, type Client, type ClientAppliance, type Service, type ServiceMaterial, type ServiceAppliance, type PerformedService, type Product } from '@/lib/supabase';
 import { formatCurrency, formatDate, formatNumber, paymentMethodLabels } from '@/lib/utils';
 import {
   LoadingSpinner, ErrorState, EmptyState, PageHeader, Badge,
@@ -43,6 +44,16 @@ export default function Clients() {
   useEffect(() => {
     loadClients();
   }, [loadClients]);
+
+  useEffect(() => {
+    const pendingClientId = sessionStorage.getItem('ar-estoque-open-client');
+    if (!pendingClientId) return;
+    const pendingClient = clients.find(client => client.id === pendingClientId);
+    if (pendingClient) {
+      setViewing(pendingClient);
+      sessionStorage.removeItem('ar-estoque-open-client');
+    }
+  }, [clients]);
 
   const filtered = clients.filter((c) =>
     (clientStatus === 'all' || (clientStatus === 'archived' ? Boolean(c.archived_at) : !c.archived_at)) &&
@@ -195,6 +206,7 @@ export default function Clients() {
       {viewing && (
         <ClientDetail
           client={viewing}
+          isAdmin={isAdmin}
           onClose={() => setViewing(null)}
         />
       )}
@@ -303,9 +315,43 @@ type ClientService = Service & {
   appliances?: (ServiceAppliance & { performed: PerformedService[] })[];
 };
 
-function ClientDetail({ client, onClose }: { client: Client; onClose: () => void }) {
+function ClientDetail({ client, isAdmin, onClose }: { client: Client; isAdmin: boolean; onClose: () => void }) {
   const [services, setServices] = useState<ClientService[]>([]);
+  const [clientAppliances, setClientAppliances] = useState<ClientAppliance[]>([]);
+  const [appliancesLoading, setAppliancesLoading] = useState(true);
+  const [appliancesError, setAppliancesError] = useState('');
+  const [applianceFormOpen, setApplianceFormOpen] = useState(false);
+  const [editingAppliance, setEditingAppliance] = useState<ClientAppliance | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadClientAppliances = useCallback(async () => {
+    setAppliancesLoading(true);
+    setAppliancesError('');
+    const { data, error: queryError } = await supabase.from('client_appliances').select('*').eq('client_id', client.id).order('name');
+    if (queryError) setAppliancesError(errorMessage(queryError));
+    else setClientAppliances((data ?? []) as ClientAppliance[]);
+    setAppliancesLoading(false);
+  }, [client.id]);
+
+  useEffect(() => { void loadClientAppliances(); }, [loadClientAppliances]);
+
+  async function setApplianceActive(appliance: ClientAppliance, is_active: boolean) {
+    const { error: updateError } = await supabase.from('client_appliances').update({ is_active, updated_at: new Date().toISOString() }).eq('id', appliance.id);
+    if (updateError) { dialogAlert('Não foi possível alterar o status do aparelho: ' + updateError.message); return; }
+    notifyMaintenanceDataChanged();
+    await loadClientAppliances();
+  }
+
+  async function saveAppliance(data: Pick<ClientAppliance, 'name' | 'location' | 'description'>) {
+    const query = editingAppliance
+      ? await supabase.from('client_appliances').update({ ...data, updated_at: new Date().toISOString() }).eq('id', editingAppliance.id)
+      : await supabase.from('client_appliances').insert({ ...data, client_id: client.id });
+    if (query.error) { dialogAlert('Não foi possível salvar o aparelho: ' + query.error.message); return; }
+    setApplianceFormOpen(false);
+    setEditingAppliance(null);
+    notifyMaintenanceDataChanged();
+    await loadClientAppliances();
+  }
 
   const [detailError,setDetailError]=useState('');
   useEffect(() => {
@@ -315,7 +361,7 @@ function ClientDetail({ client, onClose }: { client: Client; onClose: () => void
       const result=await Promise.all(data.map(async s=>{
         const [materials, applianceRows] = await Promise.all([
           allRows<ServiceMaterial & {product?:Product}>(()=>supabase.from('service_materials').select('*, product:products(*)').eq('service_id',s.id).order('id')),
-          allRows<ServiceAppliance>(()=>supabase.from('service_appliances').select('*').eq('service_id',s.id).order('appliance_number')),
+          allRows<ServiceAppliance>(()=>supabase.from('service_appliances').select('*, client_appliance:client_appliances(*)').eq('service_id',s.id).order('appliance_number')),
         ]);
         const tasks=applianceRows.length?await allRows<PerformedService>(()=>supabase.from('performed_services').select('*').in('appliance_id',applianceRows.map(a=>a.id)).order('created_at')):[];
         return {...s,materials,appliances:applianceRows.map(a=>({...a,performed:tasks.filter(t=>t.appliance_id===a.id)}))};
@@ -330,6 +376,7 @@ function ClientDetail({ client, onClose }: { client: Client; onClose: () => void
   const totalPending = services.filter((s) => s.status === 'confirmado' && s.payment_status === 'pendente').reduce((sum, s) => sum + s.total_value, 0);
 
   return (
+    <>
     <Modal open={true} onClose={onClose} title={client.name} size="lg">
       <div className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -349,6 +396,28 @@ function ClientDetail({ client, onClose }: { client: Client; onClose: () => void
         {client.notes && (
           <div className="bg-slate-50 rounded-lg p-3 text-sm text-slate-600">{client.notes}</div>
         )}
+
+        <section className="space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold text-slate-900 dark:text-slate-100">Aparelhos cadastrados</h3>
+            {isAdmin && !client.archived_at && <Button type="button" size="sm" variant="secondary" onClick={() => { setEditingAppliance(null); setApplianceFormOpen(true); }}><Plus className="h-4 w-4" /> Adicionar aparelho</Button>}
+          </div>
+          {appliancesError ? <ErrorState message={appliancesError} onRetry={loadClientAppliances} /> : appliancesLoading ? <LoadingSpinner label="Carregando aparelhos..." /> : clientAppliances.length === 0 ? (
+            <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-800">Nenhum aparelho cadastrado para este cliente.</p>
+          ) : <div className="space-y-2">
+            {clientAppliances.map(appliance => <div key={appliance.id} className="flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-800 dark:text-slate-100">{appliance.name}</p><Badge color={appliance.is_active ? 'green' : 'gray'}>{appliance.is_active ? 'Ativo' : 'Inativo'}</Badge></div>
+                {appliance.location && <p className="mt-1 text-xs text-slate-500">Local: {appliance.location}</p>}
+                {appliance.description && <p className="mt-1 whitespace-pre-wrap text-xs text-slate-500">{appliance.description}</p>}
+              </div>
+              {isAdmin && <div className="flex items-center gap-1">
+                <button type="button" onClick={() => { setEditingAppliance(appliance); setApplianceFormOpen(true); }} className="rounded-lg p-2 text-slate-400 hover:bg-sky-50 hover:text-sky-600" aria-label={`Editar ${appliance.name}`}><Pencil className="h-4 w-4" /></button>
+                <button type="button" onClick={() => void setApplianceActive(appliance, !appliance.is_active)} className="rounded-lg px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">{appliance.is_active ? 'Inativar' : 'Reativar'}</button>
+              </div>}
+            </div>)}
+          </div>}
+        </section>
 
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-sky-50 rounded-lg p-3 text-center">
@@ -395,7 +464,8 @@ function ClientDetail({ client, onClose }: { client: Client; onClose: () => void
                   </div>
                   {s.appliances?.length ? <div className="mt-3 space-y-2">
                     {s.appliances.map(appliance => <div key={appliance.id} className="rounded-lg bg-slate-50 p-3 text-xs">
-                      <p className="font-semibold text-slate-700">Ar-condicionado {appliance.appliance_number}</p>
+                      <p className="font-semibold text-slate-700">{appliance.client_appliance?.name ?? `Ar-condicionado ${appliance.appliance_number}`}</p>
+                      {appliance.client_appliance?.location && <p className="text-slate-500">Local: {appliance.client_appliance.location}</p>}
                       {appliance.notes && <p className="mt-1 whitespace-pre-wrap text-slate-500">{appliance.notes}</p>}
                       {appliance.performed.map(task => <div key={task.id} className="flex justify-between gap-2 pl-2 text-slate-600"><span>{task.name_snapshot}</span><span>{formatCurrency(task.unit_price)}</span></div>)}
                       {s.materials?.filter(m=>m.appliance_id===appliance.id).map(m=><div key={m.id} className="flex justify-between gap-2 pl-2 text-slate-600"><span>{m.product?.name ?? 'Produto'} · {formatNumber(m.quantity)} × {formatCurrency(m.unit_price)}</span><span>{formatCurrency(m.subtotal)}</span></div>)}
@@ -420,5 +490,39 @@ function ClientDetail({ client, onClose }: { client: Client; onClose: () => void
         </div>
       </div>
     </Modal>
+    {applianceFormOpen && <ClientApplianceForm
+      appliance={editingAppliance}
+      onClose={() => { setApplianceFormOpen(false); setEditingAppliance(null); }}
+      onSave={saveAppliance}
+    />}
+    </>
   );
+}
+
+function ClientApplianceForm({ appliance, onClose, onSave }: {
+  appliance: ClientAppliance | null;
+  onClose: () => void;
+  onSave: (data: Pick<ClientAppliance, 'name' | 'location' | 'description'>) => Promise<void>;
+}) {
+  const [name, setName] = useState(appliance?.name ?? '');
+  const [location, setLocation] = useState(appliance?.location ?? '');
+  const [description, setDescription] = useState(appliance?.description ?? '');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) { dialogAlert('Informe o nome do aparelho.'); return; }
+    setSaving(true);
+    await onSave({ name: name.trim(), location: location.trim(), description: description.trim() });
+    setSaving(false);
+  }
+
+  return <Modal open title={appliance ? 'Editar aparelho' : 'Novo aparelho'} onClose={() => { if (!saving) onClose(); }} size="sm">
+    <form onSubmit={submit} className="space-y-4">
+      <Input label="Nome *" value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Ar-condicionado Sala" required />
+      <Input label="Local" value={location} onChange={event => setLocation(event.target.value)} placeholder="Ex.: Sala" />
+      <Textarea label="Descrição" value={description} onChange={event => setDescription(event.target.value)} />
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></div>
+    </form>
+  </Modal>;
 }

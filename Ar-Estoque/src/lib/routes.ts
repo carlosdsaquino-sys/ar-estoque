@@ -6,6 +6,7 @@ const routeByPage: Record<string, string> = {
   reports: '/relatorios',
   'report-movements': '/relatorios/movimentacoes',
   'profit-report': '/relatorios/lucros',
+  'maintenance-alerts': '/avisos',
 };
 
 const pageByRoute = Object.fromEntries(
@@ -14,6 +15,7 @@ const pageByRoute = Object.fromEntries(
 const knownPages = new Set([
   'dashboard', 'products', 'movements', 'service-types', 'clients', 'services', 'cash',
   'reports', 'report-movements', 'profit-report', 'import', 'users',
+  'maintenance-alerts',
 ]);
 
 export function routeForPage(page: string): string | null {

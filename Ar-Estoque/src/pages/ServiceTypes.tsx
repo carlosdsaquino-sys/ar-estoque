@@ -78,6 +78,7 @@ export default function ServiceTypes() {
                   <Badge color={type.is_active ? 'green' : 'gray'}>{type.is_active ? 'Ativo' : 'Inativo'}</Badge>
                 </div>
                 {type.description && <p className="mt-1 text-sm text-slate-500">{type.description}</p>}
+                {type.maintenance_enabled && <p className="mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">Manutenção recorrente a cada {type.maintenance_interval_months} meses · aviso {type.maintenance_alert_days} dias antes</p>}
               </div>
               <p className="text-sm font-semibold text-slate-700">Padrão: {formatCurrency(type.default_price)}</p>
               {isAdmin && <div className="flex items-center gap-1">
@@ -98,14 +99,29 @@ function ServiceTypeForm({ type, onClose, onSaved }: { type: ServiceType | null;
   const [name, setName] = useState(type?.name ?? '');
   const [description, setDescription] = useState(type?.description ?? '');
   const [price, setPrice] = useState(String(type?.default_price ?? 0));
+  const [maintenanceEnabled, setMaintenanceEnabled] = useState(type?.maintenance_enabled ?? false);
+  const [maintenanceInterval, setMaintenanceInterval] = useState(String(type?.maintenance_interval_months ?? ''));
+  const [maintenanceAlertDays, setMaintenanceAlertDays] = useState(String(type?.maintenance_alert_days ?? 14));
   const [saving, setSaving] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const normalizedPrice = price.trim() === '' ? NaN : Number(price.trim().replace(',', '.'));
     if (!name.trim() || !Number.isFinite(normalizedPrice) || normalizedPrice < 0) { dialogAlert('Informe nome e preço padrão válidos.'); return; }
+    const interval = Number(maintenanceInterval);
+    const alertDays = Number(maintenanceAlertDays);
+    if (maintenanceEnabled && (!Number.isInteger(interval) || interval < 1 || !Number.isInteger(alertDays) || alertDays < 0)) {
+      dialogAlert('Informe um intervalo de pelo menos 1 mês e uma antecedência de 0 dias ou mais.');
+      return;
+    }
     setSaving(true);
-    const values = { name: name.trim(), description: description.trim(), default_price: normalizedPrice, updated_at: new Date().toISOString() };
+    const values = {
+      name: name.trim(), description: description.trim(), default_price: normalizedPrice,
+      maintenance_enabled: maintenanceEnabled,
+      maintenance_interval_months: maintenanceEnabled ? interval : null,
+      maintenance_alert_days: maintenanceEnabled ? alertDays : 14,
+      updated_at: new Date().toISOString(),
+    };
     const result = type
       ? await supabase.from('service_types').update(values).eq('id', type.id)
       : await supabase.from('service_types').insert(values);
@@ -120,6 +136,20 @@ function ServiceTypeForm({ type, onClose, onSaved }: { type: ServiceType | null;
       <Textarea label="Descrição" value={description} onChange={event => setDescription(event.target.value)} placeholder="Descrição opcional" />
       <Input label="Preço padrão (R$) *" inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} required />
       <p className="text-xs text-slate-500">O preço padrão poderá ser ajustado para cada atendimento.</p>
+      <section className="space-y-3 rounded-lg border border-slate-200 p-4 dark:border-slate-700">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Manutenção preventiva</h3>
+          <p className="mt-1 text-xs text-slate-500">Use esta configuração para serviços que precisam ser repetidos periodicamente.</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+          <input type="checkbox" checked={maintenanceEnabled} onChange={event => setMaintenanceEnabled(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+          Gera aviso de manutenção
+        </label>
+        {maintenanceEnabled && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input label="Intervalo para nova manutenção (meses) *" type="number" min="1" step="1" value={maintenanceInterval} onChange={event => setMaintenanceInterval(event.target.value)} required />
+          <Input label="Avisar com antecedência (dias) *" type="number" min="0" step="1" value={maintenanceAlertDays} onChange={event => setMaintenanceAlertDays(event.target.value)} required />
+        </div>}
+      </section>
       <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></div>
     </form>
   </Modal>;

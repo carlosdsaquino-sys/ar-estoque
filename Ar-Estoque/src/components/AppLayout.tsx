@@ -18,9 +18,11 @@ import {
   Loader2,
   Moon,
   Sun,
+  Bell,
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import { routeForPage } from '@/lib/routes';
+import { useMaintenance } from '@/context/MaintenanceContext';
 
 export type PageId =
   | 'dashboard'
@@ -34,6 +36,7 @@ export type PageId =
   | 'report-movements'
   | 'profit-report'
   | 'import'
+  | 'maintenance-alerts'
   | 'users';
 
 const items: {
@@ -49,6 +52,7 @@ const items: {
   { id: 'clients', label: 'Clientes', icon: Users },
   { id: 'services', label: 'Serviços', icon: Wrench },
   { id: 'cash', label: 'Caixa', icon: Banknote },
+  { id: 'maintenance-alerts', label: 'Avisos', icon: Bell },
   { id: 'reports', label: 'Relatórios', icon: FileBarChart },
   { id: 'import', label: 'Importar planilha', icon: Upload, adminOnly: true },
   { id: 'users', label: 'Usuários', icon: Shield, adminOnly: true },
@@ -73,6 +77,7 @@ export default function Layout({
 }) {
   const { profile, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { overdueCount } = useMaintenance();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
@@ -215,6 +220,7 @@ export default function Layout({
         )}
 
         {item.label}
+        {item.id === 'maintenance-alerts' && overdueCount > 0 && <span className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{overdueCount}</span>}
       </>;
 
     if (href) {
@@ -420,7 +426,7 @@ export default function Layout({
                   item.id !== 'dashboard' &&
                   !stockPages.includes(item.id) &&
                   !reportPages.includes(item.id) &&
-                  (item.id === 'clients' || item.id === 'services' || item.id === 'cash')
+                  (item.id === 'clients' || item.id === 'services' || item.id === 'cash' || item.id === 'maintenance-alerts')
               )
               .map(item => navButton(item))}
 

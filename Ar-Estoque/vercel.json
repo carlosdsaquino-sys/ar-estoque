@@ -6,6 +6,7 @@
     { "source": "/estoque/importar", "destination": "/index.html" },
     { "source": "/relatorios", "destination": "/index.html" },
     { "source": "/relatorios/movimentacoes", "destination": "/index.html" },
-    { "source": "/relatorios/lucros", "destination": "/index.html" }
+    { "source": "/relatorios/lucros", "destination": "/index.html" },
+    { "source": "/avisos", "destination": "/index.html" }
   ]
 }

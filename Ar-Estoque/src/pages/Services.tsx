@@ -4,8 +4,9 @@ import { operationId } from '@/lib/utils';
 import { todayLocal } from '@/lib/utils';
 import { errorMessage } from '@/lib/utils';
 import { SearchableSelect } from '@/components/SearchableSelect';
+import { notifyMaintenanceDataChanged } from '@/lib/maintenance';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { supabase, type Service, type Client, type Product, type Unit, type ServiceMaterial, type ServiceAppliance, type PerformedService, type ServiceType } from '@/lib/supabase';
+import { supabase, type Service, type Client, type ClientAppliance, type Product, type Unit, type ServiceMaterial, type ServiceAppliance, type PerformedService, type ServiceType } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrency, formatDate, formatNumber, paymentMethodLabels } from '@/lib/utils';
 import {
@@ -34,6 +35,23 @@ export default function Services() {
   const [viewing, setViewing] = useState<Service | null>(null);
   const [paying, setPaying] = useState<Service | null>(null);
   const [canceling, setCanceling] = useState<Service | null>(null);
+  const [initialVisit, setInitialVisit] = useState<{ client_id: string; client_appliance_id: string } | null>(null);
+
+  useEffect(() => {
+    const pending = sessionStorage.getItem('ar-estoque-new-maintenance-service');
+    if (!pending) return;
+    try {
+      const value = JSON.parse(pending) as { client_id?: unknown; client_appliance_id?: unknown };
+      if (typeof value.client_id === 'string' && typeof value.client_appliance_id === 'string') {
+        setInitialVisit({ client_id: value.client_id, client_appliance_id: value.client_appliance_id });
+        setEditing(null);
+        setShowForm(true);
+      }
+    } catch {
+      // Ignore malformed transient navigation state.
+    }
+    sessionStorage.removeItem('ar-estoque-new-maintenance-service');
+  }, []);
 
   const loadServices = useCallback(async () => {
     setLoading(true);
@@ -218,8 +236,10 @@ export default function Services() {
         <ServiceForm
           service={editing}
           clients={clients}
-          onSave={async () => { setShowForm(false); setEditing(null); loadServices(); }}
-          onClose={() => { setShowForm(false); setEditing(null); }}
+          isAdmin={profile?.role === 'admin'}
+          initialVisit={initialVisit}
+          onSave={async () => { setShowForm(false); setEditing(null); setInitialVisit(null); loadServices(); }}
+          onClose={() => { setShowForm(false); setEditing(null); setInitialVisit(null); }}
         />
       )}
 
@@ -239,7 +259,7 @@ export default function Services() {
         <CancelModal
           service={canceling}
           onClose={() => setCanceling(null)}
-          onCancelled={() => { setCanceling(null); loadServices(); }}
+          onCancelled={() => { setCanceling(null); loadServices(); notifyMaintenanceDataChanged(); }}
         />
       )}
     </div>
@@ -248,10 +268,10 @@ export default function Services() {
 
 type MaterialDraft = Omit<ServiceMaterial, 'quantity' | 'unit_price'> & { quantity: string; unit_price: string };
 type TaskDraft = Omit<PerformedService, 'unit_price' | 'id' | 'created_at'> & { id: string | null; created_at?: string; unit_price: string; is_legacy?: boolean };
-type ApplianceDraft = { id: string; notes: string; services: TaskDraft[]; materials: MaterialDraft[] };
+type ApplianceDraft = { id: string; client_appliance_id: string | null; notes: string; services: TaskDraft[]; materials: MaterialDraft[] };
 
 function newAppliance(): ApplianceDraft {
-  return { id: crypto.randomUUID(), notes: '', services: [], materials: [] };
+  return { id: crypto.randomUUID(), client_appliance_id: null, notes: '', services: [], materials: [] };
 }
 
 function applianceHasData(appliance: ApplianceDraft): boolean {
@@ -266,19 +286,24 @@ function parseDecimalInput(value: string): number {
 }
 
 function ServiceForm({
-  service, clients, onSave, onClose,
+  service, clients, isAdmin, initialVisit, onSave, onClose,
 }: {
   service: Service | null;
   clients: Client[];
+  isAdmin: boolean;
+  initialVisit: { client_id: string; client_appliance_id: string } | null;
   onSave: () => void;
   onClose: () => void;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
+  const [clientAppliances, setClientAppliances] = useState<ClientAppliance[]>([]);
+  const [clientAppliancesLoading, setClientAppliancesLoading] = useState(false);
+  const [quickApplianceIndex, setQuickApplianceIndex] = useState<number | null>(null);
   const [appliances, setAppliances] = useState<ApplianceDraft[]>(() => [newAppliance()]);
   const [applianceCountInput, setApplianceCountInput] = useState('1');
   const [form, setForm] = useState({
-    client_id: service?.client_id ?? '',
+    client_id: service?.client_id ?? initialVisit?.client_id ?? '',
     service_date: service?.service_date ?? todayLocal(),
     description: service?.description ?? '',
     technician: service?.technician ?? '',
@@ -314,14 +339,16 @@ function ServiceForm({
         const materialRows = (mr.data ?? []) as ServiceMaterial[];
         const loadedAppliances = applianceRows.map(a => ({
           id: a.id,
+          client_appliance_id: a.client_appliance_id ?? null,
           notes: a.notes,
           services: taskRows.filter(t => t.appliance_id === a.id).map(t => ({ ...t, is_legacy: !t.service_type_id, unit_price: String(t.unit_price) })),
           materials: materialRows.filter(m => m.appliance_id === a.id).map(m => ({ ...m, quantity: String(m.quantity), unit_price: String(m.unit_price) })),
         }));
         const legacyAppliance = service && !applianceRows.length ? [{
           id: crypto.randomUUID(),
+          client_appliance_id: null,
           notes: '',
-          services: [{ id: null, appliance_id: '', service_type_id: null, name_snapshot: service.description || 'Serviço registrado', description_snapshot: 'Registro anterior', unit_price: String(service.labor_value), created_at: '', is_legacy: true }],
+          services: [{ id: null, appliance_id: '', service_type_id: null, name_snapshot: service.description || 'Serviço registrado', description_snapshot: 'Registro anterior', unit_price: String(service.labor_value), maintenance_enabled_snapshot: false, maintenance_interval_months_snapshot: null, maintenance_alert_days_snapshot: 0, created_at: '', is_legacy: true }],
           materials: materialRows.map(m => ({ ...m, quantity: String(m.quantity), unit_price: String(m.unit_price) })),
         }] : [];
         if (active) {
@@ -331,7 +358,7 @@ function ServiceForm({
             ? loadedAppliances
             : legacyAppliance.length
               ? legacyAppliance
-              : [newAppliance()];
+              : [Object.assign(newAppliance(), { client_appliance_id: initialVisit?.client_appliance_id ?? null })];
           setAppliances(initialAppliances);
           setApplianceCountInput(String(initialAppliances.length));
           setReady(true);
@@ -341,12 +368,54 @@ function ServiceForm({
       }
     })();
     return () => { active = false; };
-  }, [service]);
+  }, [initialVisit?.client_appliance_id, service]);
+
+  useEffect(() => {
+    let active = true;
+    if (!form.client_id) { setClientAppliances([]); return; }
+    setClientAppliancesLoading(true);
+    allRows<ClientAppliance>(() => supabase.from('client_appliances').select('*').eq('client_id', form.client_id).order('name'))
+      .then(rows => { if (active) setClientAppliances(rows); })
+      .catch(error => { if (active) dialogAlert('Não foi possível carregar os aparelhos do cliente: ' + errorMessage(error)); })
+      .finally(() => { if (active) setClientAppliancesLoading(false); });
+    return () => { active = false; };
+  }, [form.client_id]);
 
   const servicesTotal = appliances.reduce((sum, a) => sum + a.services.reduce((s, task) => s + parseDecimalInput(task.unit_price), 0), 0);
   const materialsTotal = appliances.reduce((sum, a) => sum + a.materials.reduce((s, m) => s + m.subtotal, 0), 0);
   const discountValue = parseDecimalInput(form.discount);
   const totalValue = materialsTotal + servicesTotal - discountValue;
+
+  function changeClient(clientId: string) {
+    setForm(current => ({ ...current, client_id: clientId }));
+    if (clientId !== form.client_id) {
+      setAppliances(current => current.map(appliance => ({ ...appliance, client_appliance_id: null })));
+    }
+  }
+
+  function changeClientAppliance(applianceIndex: number, clientApplianceId: string) {
+    if (clientApplianceId && appliances.some((appliance, index) => index !== applianceIndex && appliance.client_appliance_id === clientApplianceId)) {
+      dialogAlert('Este aparelho já foi adicionado a este atendimento.');
+      return;
+    }
+    setAppliances(current => current.map((appliance, index) => index === applianceIndex
+      ? { ...appliance, client_appliance_id: clientApplianceId || null }
+      : appliance));
+  }
+
+  async function registerClientAppliance(data: { name: string; location: string; description: string }) {
+    if (!form.client_id || quickApplianceIndex === null) return;
+    const { data: saved, error: insertError } = await supabase.from('client_appliances')
+      .insert({ ...data, client_id: form.client_id })
+      .select('*')
+      .single();
+    if (insertError) { dialogAlert('Não foi possível cadastrar o aparelho: ' + insertError.message); return; }
+    const appliance = saved as ClientAppliance;
+    setClientAppliances(current => [...current, appliance].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')));
+    changeClientAppliance(quickApplianceIndex, appliance.id);
+    setQuickApplianceIndex(null);
+    notifyMaintenanceDataChanged();
+  }
 
   async function setApplianceCount(count: number) {
     if (!Number.isInteger(count) || count < 1) return;
@@ -372,7 +441,7 @@ function ServiceForm({
 
   function addTask(applianceIndex: number) {
     setAppliances(current => current.map((a, i) => i === applianceIndex ? { ...a, services: [...a.services, {
-      id: null, appliance_id: a.id, service_type_id: null, name_snapshot: '', description_snapshot: '', unit_price: '0', created_at: '',
+      id: null, appliance_id: a.id, service_type_id: null, name_snapshot: '', description_snapshot: '', unit_price: '0', maintenance_enabled_snapshot: false, maintenance_interval_months_snapshot: null, maintenance_alert_days_snapshot: 0, created_at: '',
     }] } : a));
   }
 
@@ -416,6 +485,14 @@ function ServiceForm({
       dialogAlert('Preencha cliente, data, descrição e técnico responsável.');
       return;
     }
+    if (appliances.some(appliance => !appliance.client_appliance_id)) {
+      dialogAlert('Selecione o aparelho do cliente em cada bloco do atendimento.');
+      return;
+    }
+    if (new Set(appliances.map(appliance => appliance.client_appliance_id)).size !== appliances.length) {
+      dialogAlert('Este aparelho já foi adicionado a este atendimento.');
+      return;
+    }
     if ([servicesTotal, materialsTotal, discountValue, totalValue].some(v => !Number.isFinite(v) || v < 0)) {
       dialogAlert('Confira os valores e o desconto.');
       return;
@@ -434,6 +511,7 @@ function ServiceForm({
     }
 
     const appliancePayload = appliances.map(a => ({
+      client_appliance_id: a.client_appliance_id,
       notes: a.notes,
       services: a.services.map(t => ({ id: t.id, service_type_id: t.service_type_id, is_legacy: t.is_legacy ?? false, unit_price: parseDecimalInput(t.unit_price) })),
       materials: a.materials.map(m => ({ id: m.id || null, product_id: m.product_id, quantity: parseDecimalInput(m.quantity), unit_price: parseDecimalInput(m.unit_price) })),
@@ -461,6 +539,7 @@ function ServiceForm({
         p_request_id: operationId(request, payload),
       });
       if (error) throw error;
+      notifyMaintenanceDataChanged();
       onSave();
     } catch (err) {
       dialogAlert(errorMessage(err));
@@ -472,6 +551,7 @@ function ServiceForm({
   }
 
   return (
+    <>
     <Modal open={true} onClose={() => { if (!saving) onClose(); }} title={service ? `Editar Serviço #${service.number}` : 'Novo Serviço'} size="xl">
       <div className="space-y-4">
         {loadError && <p className="text-red-700">{loadError}</p>}
@@ -481,7 +561,7 @@ function ServiceForm({
           <SearchableSelect
             label="Cliente *"
             value={form.client_id}
-            onChange={client_id => setForm(current => ({ ...current, client_id }))}
+            onChange={changeClient}
             required
             options={clients.filter(c => !c.archived_at || c.id === service?.client_id).map(c => ({
               value: c.id,
@@ -538,6 +618,26 @@ function ServiceForm({
             return (
               <section key={appliance.id} className="motion-item rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <h3 className="mb-3 text-sm font-bold text-slate-800">AR-CONDICIONADO {applianceIndex + 1}</h3>
+                <div className="mb-4">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <label className="block text-xs font-medium text-slate-600">Aparelho do cliente *</label>
+                    {isAdmin && form.client_id && <button type="button" onClick={() => setQuickApplianceIndex(applianceIndex)} className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300">Cadastrar aparelho</button>}
+                  </div>
+                  {!isAdmin && clientAppliances.length === 0 && <p className="mb-1 text-xs text-amber-700">Solicite ao administrador o cadastro do aparelho deste cliente.</p>}
+                  <SearchableSelect
+                    value={appliance.client_appliance_id ?? ''}
+                    placeholder={clientAppliancesLoading ? 'Carregando aparelhos...' : 'Pesquisar e selecionar aparelho...'}
+                    disabled={!form.client_id || clientAppliancesLoading}
+                    className="[&_input]:rounded [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm"
+                    onChange={value => changeClientAppliance(applianceIndex, value)}
+                    options={clientAppliances
+                      .filter(item => item.is_active || item.id === appliance.client_appliance_id)
+                      .map(item => ({
+                        value: item.id,
+                        label: [item.name, item.location, item.description].filter(Boolean).join(' · ') + (appliances.some((other, index) => index !== applianceIndex && other.client_appliance_id === item.id) ? ' (já adicionado)' : ''),
+                      }))}
+                  />
+                </div>
                 <Textarea label="Observações deste aparelho" value={appliance.notes} onChange={e => setAppliances(current => current.map((a, i) => i === applianceIndex ? { ...a, notes: e.target.value } : a))} />
 
                 <div className="mt-4">
@@ -697,7 +797,37 @@ function ServiceForm({
         </div>
       </div>
     </Modal>
+    {quickApplianceIndex !== null && <QuickClientApplianceForm
+      onClose={() => setQuickApplianceIndex(null)}
+      onSave={registerClientAppliance}
+    />}
+    </>
   );
+}
+
+function QuickClientApplianceForm({ onClose, onSave }: {
+  onClose: () => void;
+  onSave: (data: { name: string; location: string; description: string }) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) { dialogAlert('Informe o nome do aparelho.'); return; }
+    setSaving(true);
+    await onSave({ name: name.trim(), location: location.trim(), description: description.trim() });
+    setSaving(false);
+  }
+  return <Modal open title="Novo aparelho" onClose={() => { if (!saving) onClose(); }} size="sm">
+    <form onSubmit={submit} className="space-y-4">
+      <Input label="Nome *" value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Ar-condicionado Sala" required />
+      <Input label="Local" value={location} onChange={event => setLocation(event.target.value)} placeholder="Ex.: Sala" />
+      <Textarea label="Descrição" value={description} onChange={event => setDescription(event.target.value)} />
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></div>
+    </form>
+  </Modal>;
 }
 
 type HistoryEntry = { id: string; action: string; description: string; user_name: string; created_at: string };
@@ -779,7 +909,9 @@ function historyLines(entry: HistoryEntry, materials: ServiceMaterial[]): string
       value.forEach((rawDevice, index) => {
         if (!rawDevice || typeof rawDevice !== 'object') return;
         const device = rawDevice as Record<string, unknown>;
-        lines.push(`Ar-condicionado ${device.appliance_number ?? index + 1}`);
+        lines.push(typeof device.client_appliance_name === 'string' && device.client_appliance_name
+          ? `Aparelho: ${device.client_appliance_name}${device.client_appliance_location ? ` · ${String(device.client_appliance_location)}` : ''}`
+          : `Ar-condicionado ${device.appliance_number ?? index + 1}`);
         if (typeof device.notes === 'string' && device.notes) lines.push(`Observações: ${device.notes}`);
         if (Array.isArray(device.services)) device.services.forEach(rawTask => {
           if (!rawTask || typeof rawTask !== 'object') return;
@@ -820,7 +952,7 @@ function ServiceDetail({ service, onClose }: { service: Service; onClose: () => 
         supabase.from('clients').select('*').eq('id', service.client_id).maybeSingle(),
         supabase.from('service_materials').select('*, product:products(*), unit:units(*)').eq('service_id', service.id),
         supabase.from('service_history').select('*').eq('service_id',service.id).order('created_at',{ascending:false}),
-        supabase.from('service_appliances').select('*').eq('service_id',service.id).order('appliance_number'),
+        supabase.from('service_appliances').select('*, client_appliance:client_appliances(*)').eq('service_id',service.id).order('appliance_number'),
       ]);
       if (clientRes.error || matsRes.error || historyRes.error || appliancesRes.error) setDetailError(errorMessage(clientRes.error || matsRes.error || historyRes.error || appliancesRes.error));
       const applianceRows = (appliancesRes.data ?? []) as ServiceAppliance[];
@@ -855,7 +987,7 @@ function ServiceDetail({ service, onClose }: { service: Service; onClose: () => 
       const deviceMaterials = appliance.materials.reduce((sum, material) => sum + material.subtotal, 0);
       const taskRows = appliance.services.map(task => `<tr><td>${escape(task.name_snapshot)}</td><td class="number">${escape(formatCurrency(task.unit_price))}</td></tr>`).join('');
       const materialRows = appliance.materials.map(m => `<tr><td>${escape(m.product?.name ?? 'Material')}</td><td class="number">${escape(formatNumber(m.quantity))} ${escape(m.unit?.name ?? '')}</td><td class="number">${escape(formatCurrency(m.unit_price))}</td><td class="number">${escape(formatCurrency(m.subtotal))}</td></tr>`).join('');
-      return `<section><h2>Ar-condicionado ${appliance.appliance_number}</h2>${appliance.notes ? `<p class="text">${escape(appliance.notes)}</p>` : ''}<h3>Serviços realizados</h3><table><thead><tr><th>Tipo de serviço</th><th class="number">Preço</th></tr></thead><tbody>${taskRows}</tbody></table><h3>Materiais utilizados</h3><table><thead><tr><th>Material</th><th class="number">Quantidade</th><th class="number">Preço unitário</th><th class="number">Subtotal</th></tr></thead><tbody>${materialRows || '<tr><td colspan="4">Nenhum material</td></tr>'}</tbody></table><p class="number"><strong>Total do aparelho: ${escape(formatCurrency(taskTotal + deviceMaterials))}</strong></p></section>`;
+      return `<section><h2>${escape(appliance.client_appliance?.name ?? `Ar-condicionado ${appliance.appliance_number}`)}</h2>${appliance.client_appliance?.location ? `<p class="text">Local: ${escape(appliance.client_appliance.location)}</p>` : ''}${appliance.notes ? `<p class="text">${escape(appliance.notes)}</p>` : ''}<h3>Serviços realizados</h3><table><thead><tr><th>Tipo de serviço</th><th class="number">Preço</th></tr></thead><tbody>${taskRows}</tbody></table><h3>Materiais utilizados</h3><table><thead><tr><th>Material</th><th class="number">Quantidade</th><th class="number">Preço unitário</th><th class="number">Subtotal</th></tr></thead><tbody>${materialRows || '<tr><td colspan="4">Nenhum material</td></tr>'}</tbody></table><p class="number"><strong>Total do aparelho: ${escape(formatCurrency(taskTotal + deviceMaterials))}</strong></p></section>`;
     }).join('') : `<h2>Materiais utilizados</h2><table><thead><tr><th>Material</th><th class="number">Quantidade</th><th class="number">Preço unitário</th><th class="number">Subtotal</th></tr></thead><tbody>${materials.map(m => `<tr><td>${escape(m.product?.name ?? 'Material')}</td><td class="number">${escape(formatNumber(m.quantity))}</td><td class="number">${escape(formatCurrency(m.unit_price))}</td><td class="number">${escape(formatCurrency(m.subtotal))}</td></tr>`).join('')}</tbody></table>`;
     printWindow.document.open();
     printWindow.document.write(`<!doctype html>
@@ -967,7 +1099,8 @@ function ServiceDetail({ service, onClose }: { service: Service; onClose: () => 
           const taskTotal = appliance.services.reduce((sum, task) => sum + task.unit_price, 0);
           const deviceMaterialsTotal = appliance.materials.reduce((sum, material) => sum + material.subtotal, 0);
           return <section key={appliance.id} className="rounded-xl border border-slate-200 p-4">
-            <h3 className="mb-2 text-sm font-bold text-slate-800">AR-CONDICIONADO {appliance.appliance_number}</h3>
+            <h3 className="mb-2 text-sm font-bold text-slate-800">{appliance.client_appliance?.name ?? `AR-CONDICIONADO ${appliance.appliance_number}`}</h3>
+            {appliance.client_appliance?.location && <p className="mb-2 text-xs text-slate-500">{appliance.client_appliance.location}</p>}
             {appliance.notes && <p className="mb-3 whitespace-pre-wrap text-sm text-slate-600">{appliance.notes}</p>}
             <p className="mb-1 text-xs font-semibold text-slate-500">Serviços realizados</p>
             <div className="space-y-1">
