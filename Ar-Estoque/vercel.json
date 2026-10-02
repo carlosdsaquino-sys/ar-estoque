@@ -1,12 +1,60 @@
 {
   "rewrites": [
-    { "source": "/estoque/produtos", "destination": "/index.html" },
-    { "source": "/estoque/movimentacoes", "destination": "/index.html" },
-    { "source": "/estoque/tipos-de-servico", "destination": "/index.html" },
-    { "source": "/estoque/importar", "destination": "/index.html" },
-    { "source": "/relatorios", "destination": "/index.html" },
-    { "source": "/relatorios/movimentacoes", "destination": "/index.html" },
-    { "source": "/relatorios/lucros", "destination": "/index.html" },
-    { "source": "/avisos", "destination": "/index.html" }
+    {
+      "source": "/estoque/produtos",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/estoque/movimentacoes",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/estoque/tipos-de-servico",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/estoque/importar",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/relatorios",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/relatorios/movimentacoes",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/relatorios/lucros",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/avisos",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/agendamentos",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/servicos",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/clientes",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/caixa",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/usuarios",
+      "destination": "/index.html"
+    }
   ]
 }

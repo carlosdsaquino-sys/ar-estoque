@@ -1,3 +1,4 @@
+import { notifyAppointmentsChanged, type Appointment } from '@/lib/appointments';
 import { dialogAlert, dialogConfirm, dialogPrompt } from '@/components/DialogProvider';
 import { allRows } from '@/lib/data';
 import { operationId } from '@/lib/utils';
@@ -20,6 +21,8 @@ import {
 
 export default function Services() {
   const { profile } = useAuth();
+  const loadRevision = useRef(0);
+  useEffect(() => () => { loadRevision.current++; }, []);
   const [services, setServices] = useState<(Service & { client?: Client })[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,9 +38,19 @@ export default function Services() {
   const [viewing, setViewing] = useState<Service | null>(null);
   const [paying, setPaying] = useState<Service | null>(null);
   const [canceling, setCanceling] = useState<Service | null>(null);
+  const [initialAppointment, setInitialAppointment] = useState<Appointment | null>(null);
   const [initialVisit, setInitialVisit] = useState<{ client_id: string; client_appliance_id: string } | null>(null);
 
   useEffect(() => {
+    const appointment = sessionStorage.getItem('ar-estoque-appointment-service');
+    sessionStorage.removeItem('ar-estoque-appointment-service');
+    if (appointment) {
+      try { const a = JSON.parse(appointment) as Appointment; if (a.id && a.client_id) {
+        setInitialAppointment(a); if (!a.completed_service_id) setShowForm(true);
+        if (a.completed_service_id) { supabase.from('services').select('*').eq('id',a.completed_service_id).single().then(({data,error}) => { if (error) { dialogAlert(error.message); setShowForm(false); } else { setEditing(data as Service); setShowForm(true); } }); }
+      } } catch { /* Ignore invalid navigation state. */ }
+      return;
+    }
     const pending = sessionStorage.getItem('ar-estoque-new-maintenance-service');
     if (!pending) return;
     try {
@@ -54,6 +67,7 @@ export default function Services() {
   }, []);
 
   const loadServices = useCallback(async () => {
+    const revision = ++loadRevision.current;
     setLoading(true);
     setError(null);
     try {
@@ -70,11 +84,11 @@ export default function Services() {
       if (dateTo) query = query.lte('service_date', dateTo);
 
       const data = await allRows(() => query);
-      setServices(data as (Service & { client?: Client })[]);
+      if (revision === loadRevision.current) setServices(data as (Service & { client?: Client })[]);
     } catch (err) {
-      setError(errorMessage(err));
+      if (revision === loadRevision.current) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
   }, [filterClient, filterStatus, filterPayment, dateFrom, dateTo]);
 
@@ -238,8 +252,9 @@ export default function Services() {
           clients={clients}
           isAdmin={profile?.role === 'admin'}
           initialVisit={initialVisit}
-          onSave={async () => { setShowForm(false); setEditing(null); setInitialVisit(null); loadServices(); }}
-          onClose={() => { setShowForm(false); setEditing(null); setInitialVisit(null); }}
+          initialAppointment={initialAppointment}
+          onSave={async () => { setShowForm(false); setEditing(null); setInitialVisit(null); setInitialAppointment(null); loadServices(); }}
+          onClose={() => { setShowForm(false); setEditing(null); setInitialVisit(null); setInitialAppointment(null); }}
         />
       )}
 
@@ -286,11 +301,12 @@ function parseDecimalInput(value: string): number {
 }
 
 function ServiceForm({
-  service, clients, isAdmin, initialVisit, onSave, onClose,
+  service, clients, isAdmin, initialVisit, initialAppointment, onSave, onClose,
 }: {
   service: Service | null;
   clients: Client[];
   isAdmin: boolean;
+  initialAppointment: Appointment | null;
   initialVisit: { client_id: string; client_appliance_id: string } | null;
   onSave: () => void;
   onClose: () => void;
@@ -303,12 +319,12 @@ function ServiceForm({
   const [appliances, setAppliances] = useState<ApplianceDraft[]>(() => [newAppliance()]);
   const [applianceCountInput, setApplianceCountInput] = useState('1');
   const [form, setForm] = useState({
-    client_id: service?.client_id ?? initialVisit?.client_id ?? '',
-    service_date: service?.service_date ?? todayLocal(),
-    description: service?.description ?? '',
-    technician: service?.technician ?? '',
+    client_id: service?.client_id ?? initialAppointment?.client_id ?? initialVisit?.client_id ?? '',
+    service_date: service?.service_date ?? initialAppointment?.scheduled_date ?? todayLocal(),
+    description: service?.description ?? initialAppointment?.service_type?.name ?? '',
+    technician: service?.technician ?? initialAppointment?.technician ?? '',
     discount: String(service?.discount ?? 0),
-    notes: service?.notes ?? '',
+    notes: service?.notes ?? initialAppointment?.notes ?? '',
   });
   const [saving, setSaving] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -358,7 +374,12 @@ function ServiceForm({
             ? loadedAppliances
             : legacyAppliance.length
               ? legacyAppliance
-              : [Object.assign(newAppliance(), { client_appliance_id: initialVisit?.client_appliance_id ?? null })];
+              : initialAppointment?.appliances.length ? initialAppointment.appliances.map(a => {
+                  const device = Object.assign(newAppliance(), {client_appliance_id:a.client_appliance_id});
+                  const type = (tr.data as ServiceType[]).find(t => t.id === initialAppointment.service_type_id && t.is_active);
+                  if (type) device.services = [{id:null,appliance_id:device.id,service_type_id:type.id,name_snapshot:type.name,description_snapshot:type.description,unit_price:String(type.default_price),maintenance_enabled_snapshot:type.maintenance_enabled,maintenance_interval_months_snapshot:type.maintenance_interval_months,maintenance_alert_days_snapshot:type.maintenance_alert_days}];
+                  return device;
+                }) : [Object.assign(newAppliance(), { client_appliance_id: initialVisit?.client_appliance_id ?? null })];
           setAppliances(initialAppliances);
           setApplianceCountInput(String(initialAppliances.length));
           setReady(true);
@@ -368,13 +389,13 @@ function ServiceForm({
       }
     })();
     return () => { active = false; };
-  }, [initialVisit?.client_appliance_id, service]);
+  }, [initialVisit?.client_appliance_id, initialAppointment, service]);
 
   useEffect(() => {
     let active = true;
     if (!form.client_id) { setClientAppliances([]); return; }
     setClientAppliancesLoading(true);
-    allRows<ClientAppliance>(() => supabase.from('client_appliances').select('*').eq('client_id', form.client_id).order('name'))
+    allRows<ClientAppliance>(() => supabase.from('client_appliances').select('*').eq('client_id', form.client_id).order('name').order('id'))
       .then(rows => { if (active) setClientAppliances(rows); })
       .catch(error => { if (active) dialogAlert('Não foi possível carregar os aparelhos do cliente: ' + errorMessage(error)); })
       .finally(() => { if (active) setClientAppliancesLoading(false); });
@@ -534,12 +555,14 @@ function ServiceForm({
     setConfirming(confirm);
 
     try {
-      const { error } = await supabase.rpc('save_service_visit', {
+      const { error } = await supabase.rpc(initialAppointment ? 'save_appointment_service' : 'save_service_visit', {
+        ...(initialAppointment ? { p_appointment_id: initialAppointment.id } : {}),
         ...payload,
         p_request_id: operationId(request, payload),
       });
       if (error) throw error;
       notifyMaintenanceDataChanged();
+      notifyAppointmentsChanged();
       onSave();
     } catch (err) {
       dialogAlert(errorMessage(err));

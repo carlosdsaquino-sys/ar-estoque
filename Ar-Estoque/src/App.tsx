@@ -14,12 +14,14 @@ import Reports, { ProfitReport } from '@/pages/Reports';
 import Import from '@/pages/Import';
 import Cash from '@/pages/Cash';
 import Maintenance from '@/pages/Maintenance';
-import { LoadingSpinner } from '@/components/ui';
+import { LoadingSpinner, ErrorState } from '@/components/ui';
 import { DialogProvider } from '@/components/DialogProvider';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { pageForLocation, routeForPage } from '@/lib/routes';
 import { MaintenanceProvider } from '@/context/MaintenanceContext';
-import { MaintenancePopup } from '@/pages/Maintenance';
+import DailyAlertsPopup from '@/components/DailyAlertsPopup';
+import Appointments from '@/pages/Appointments';
+import { AppointmentsProvider } from '@/context/AppointmentsContext';
 
 function AppContent() {
   const { session, profile, loading, profileError, reloadProfile, signOut } = useAuth();
@@ -39,6 +41,13 @@ function AppContent() {
     setPage(pageId);
   }
 
+  function afterSignIn() {
+    // Only the explicit login form calls this; session restoration keeps its URL.
+    const existingState = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
+    window.history.replaceState({ ...existingState, arEstoquePage: 'dashboard' }, '', routeForPage('dashboard'));
+    setPage('dashboard');
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -48,7 +57,7 @@ function AppContent() {
   }
 
   if (!session) {
-    return <AuthPage />;
+    return <AuthPage onSignedIn={afterSignIn} />;
   }
 
   if (!profile?.is_active || profileError) return <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-8 text-center">
@@ -60,13 +69,14 @@ function AppContent() {
   return (
     <>
     <Layout current={page} onNavigate={navigate}>
-      {page === 'users' && profile.role === 'admin' && <UsersPage />}
+      {page === 'users' && (profile.role === 'admin' ? <UsersPage /> : <ErrorState message="Acesso restrito ao administrador" />)}
       {page === 'dashboard' && <Dashboard />}
       {page === 'products' && <Products />}
       {page === 'movements' && <Movements />}
       {page === 'service-types' && <ServiceTypes />}
       {page === 'clients' && <Clients />}
       {page === 'services' && <Services />}
+      {page === 'appointments' && <Appointments onNavigate={navigate} />}
       {page === 'cash' && <Cash />}
       {page === 'reports' && <Reports mode="general" />}
       {page === 'report-movements' && <Reports mode="movements" />}
@@ -74,7 +84,7 @@ function AppContent() {
       {page === 'import' && <Import />}
       {page === 'maintenance-alerts' && <Maintenance onNavigate={navigate} />}
     </Layout>
-    <MaintenancePopup userId={profile.id} onNavigate={navigate} />
+    <DailyAlertsPopup userId={profile.id} onNavigate={navigate} />
     </>
   );
 }
@@ -86,7 +96,7 @@ function App() {
       <DialogProvider>
         <AuthProvider>
           <MaintenanceProvider>
-            <AppContent />
+            <AppointmentsProvider><AppContent /></AppointmentsProvider>
           </MaintenanceProvider>
         </AuthProvider>
       </DialogProvider>

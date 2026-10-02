@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase, type MaintenanceOverviewItem, type PerformedService, type Service } from '@/lib/supabase';
 import { useMaintenance } from '@/context/MaintenanceContext';
-import { formatDate, todayLocal } from '@/lib/utils';
-import { maintenanceCategory, maintenancePopupKey, type MaintenanceCategory } from '@/lib/maintenance';
+import { formatDate } from '@/lib/utils';
+import { maintenanceCategory, type MaintenanceCategory } from '@/lib/maintenance';
 import { ErrorState, LoadingSpinner, EmptyState, PageHeader, Badge, Button, Input, Modal } from '@/components/ui';
 import { Bell, CalendarClock, CheckCircle2, Clock3, ExternalLink, Wrench } from 'lucide-react';
 import type { PageId } from '@/components/AppLayout';
@@ -64,7 +64,7 @@ export default function Maintenance({ onNavigate }: { onNavigate: (page: PageId)
       <h2 className="font-semibold text-green-800 dark:text-green-200">Está tudo em dia.</h2>
       <p className="mt-1 text-sm text-green-700 dark:text-green-300">Não existem aparelhos com manutenção atrasada ou próxima da data configurada.</p>
     </div> : filtered.length === 0 ? <EmptyState icon={Bell} title="Nenhum aviso encontrado" description="Altere a pesquisa ou o filtro." /> : <div className="space-y-3">
-      {filtered.map(item => <MaintenanceCard key={item.client_appliance_id} item={item} onClient={() => openClient(item.client_id)} onHistory={() => setHistoryFor(item)} onRegister={() => registerService(item)} />)}
+      {filtered.map(item => <MaintenanceCard key={item.client_appliance_id} item={item} onClient={() => openClient(item.client_id)} onHistory={() => setHistoryFor(item)} onRegister={() => registerService(item)} onSchedule={() => { sessionStorage.setItem('ar-estoque-new-appointment', JSON.stringify({client_id:item.client_id, appliance_ids:[item.client_appliance_id], service_type_id:item.service_type_id})); onNavigate('appointments'); }} />)}
     </div>}
 
     {historyFor && <MaintenanceHistoryModal item={historyFor} onClose={() => setHistoryFor(null)} />}
@@ -81,7 +81,7 @@ function SummaryCard({ color, icon: Icon, label, value }: { color: 'red' | 'oran
   return <div className={`flex items-center gap-3 rounded-xl border p-4 ${colors[color]}`}><Icon className="h-6 w-6 shrink-0" /><div><p className="text-sm">{label}</p><p className="text-2xl font-bold">{value}</p></div></div>;
 }
 
-function MaintenanceCard({ item, onClient, onHistory, onRegister }: { item: MaintenanceOverviewItem; onClient: () => void; onHistory: () => void; onRegister: () => void }) {
+function MaintenanceCard({ item, onClient, onHistory, onRegister, onSchedule }: { item: MaintenanceOverviewItem; onClient: () => void; onHistory: () => void; onRegister: () => void; onSchedule: () => void }) {
   const category = maintenanceCategory(item);
   const badgeColor = category === 'overdue' ? 'red' : category === 'today' ? 'yellow' : 'blue';
   return <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -105,6 +105,7 @@ function MaintenanceCard({ item, onClient, onHistory, onRegister }: { item: Main
     <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
       <Button type="button" size="sm" variant="secondary" onClick={onClient}>Ver cliente</Button>
       <Button type="button" size="sm" variant="secondary" onClick={onHistory}>Ver histórico</Button>
+      <Button type="button" size="sm" variant="secondary" onClick={onSchedule}>Agendar limpeza</Button>
       <Button type="button" size="sm" onClick={onRegister}><Wrench className="h-4 w-4" /> Registrar serviço</Button>
     </div>
   </article>;
@@ -148,31 +149,6 @@ function MaintenanceHistoryModal({ item, onClose }: { item: MaintenanceOverviewI
           <div className="mt-2 space-y-1">{tasks.filter(task => task.appliance_id === row.id).map(task => <p key={task.id} className="text-sm text-slate-700 dark:text-slate-300">{task.name_snapshot}{task.maintenance_enabled_snapshot ? ' · manutenção recorrente' : ''}</p>)}</div>
         </div>)}
       <div className="flex justify-end"><Button type="button" variant="secondary" onClick={onClose}>Fechar</Button></div>
-    </div>
-  </Modal>;
-}
-
-export function MaintenancePopup({ userId, onNavigate }: { userId: string; onNavigate: (page: PageId) => void }) {
-  const { loading, error, overdueCount, todayCount, upcomingCount } = useMaintenance();
-  const [open, setOpen] = useState(false);
-  const shownForKey = useRef('');
-  const day = todayLocal();
-  const key = maintenancePopupKey(userId, day);
-  const attentionCount = overdueCount + todayCount;
-
-  useEffect(() => {
-    if (!userId || loading || error || shownForKey.current === key) return;
-    shownForKey.current = key;
-    try { if (localStorage.getItem(key)) { shownForKey.current = key; return; } } catch { /* Keep a tab-local duplicate guard below. */ }
-    if (overdueCount + todayCount + upcomingCount === 0) return;
-    try { localStorage.setItem(key, '1'); } catch { /* The popup still appears once in this app session. */ }
-    setOpen(true);
-  }, [error, key, loading, overdueCount, todayCount, upcomingCount, userId]);
-
-  return <Modal open={open} onClose={() => setOpen(false)} title="Avisos de manutenção" size="sm">
-    <div className="space-y-4">
-      <p className="text-sm text-slate-700 dark:text-slate-300">{attentionCount} {attentionCount === 1 ? 'aparelho precisa' : 'aparelhos precisam'} de manutenção.{upcomingCount > 0 && ` Outros ${upcomingCount} ${upcomingCount === 1 ? 'aparelho está' : 'aparelhos estão'} próximos da data.`}</p>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setOpen(false)}>Fechar</Button><Button type="button" onClick={() => { setOpen(false); onNavigate('maintenance-alerts'); }}>Ver avisos</Button></div>
     </div>
   </Modal>;
 }

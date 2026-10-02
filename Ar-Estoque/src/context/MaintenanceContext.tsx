@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { errorMessage, millisecondsUntilNextLocalMidnight, todayLocal } from '@/lib/utils';
 import { maintenanceCategory } from '@/lib/maintenance';
@@ -21,6 +21,7 @@ const DATA_CHANGED_EVENT = 'ar-estoque-maintenance-data-changed';
 
 export function MaintenanceProvider({ children }: { children: ReactNode }) {
   const { session, profile } = useAuth();
+  const revision = useRef(0);
   const [items, setItems] = useState<MaintenanceOverviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,21 +30,24 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     if (!userId || !profileReady) return;
+    const currentRevision = ++revision.current;
     setLoading(true);
     setError(null);
     try {
       const { data, error: queryError } = await supabase.rpc('maintenance_overview', { p_today: todayLocal() });
       if (queryError) throw queryError;
-      setItems((data ?? []) as MaintenanceOverviewItem[]);
+      if (currentRevision === revision.current) setItems((data ?? []) as MaintenanceOverviewItem[]);
     } catch (queryError) {
-      setError(errorMessage(queryError));
+      if (currentRevision === revision.current) setError(errorMessage(queryError));
     } finally {
-      setLoading(false);
+      if (currentRevision === revision.current) setLoading(false);
     }
   }, [profileReady, userId]);
 
   useEffect(() => {
+    const revisionRef = revision;
     if (!userId || !profileReady) {
+      revision.current++;
       setItems([]);
       setLoading(!userId);
       return;
@@ -63,6 +67,7 @@ export function MaintenanceProvider({ children }: { children: ReactNode }) {
     scheduleNextLocalDay();
 
     return () => {
+      revisionRef.current++;
       window.clearTimeout(timer);
       window.removeEventListener(DATA_CHANGED_EVENT, handleDataChanged);
     };

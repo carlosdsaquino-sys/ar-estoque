@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Banknote, CalendarDays, CheckCircle2, Clock3, Eye, Minus, Plus, RefreshCw, Wallet } from 'lucide-react';
 import { dialogAlert, dialogConfirm } from '@/components/DialogProvider';
 import { Badge, Button, EmptyState, ErrorState, Input, LoadingSpinner, Modal, PageHeader, Select, Textarea } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
-import { formatCurrency, formatDate, formatDateTime, paymentMethodLabels } from '@/lib/utils';
+import { operationId, formatCurrency, formatDate, formatDateTime, paymentMethodLabels } from '@/lib/utils';
 import { errorMessage } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
@@ -78,6 +78,7 @@ function businessToday(): string {
 
 export default function Cash() {
   const { profile } = useAuth();
+  const movementRequest = useRef<{payload:string;id:string}|null>(null);
   const isAdmin = profile?.role === 'admin';
   const [register, setRegister] = useState<CashRegister | null>(null);
   const [history, setHistory] = useState<CashHistoryEntry[]>([]);
@@ -129,15 +130,17 @@ export default function Cash() {
 
   async function submitMovement(type: MovementType, description: string, amount: number, method: PaymentMethod, reason: string) {
     if (!register) return false;
-    const { error: movementError } = await supabase.rpc('record_cash_movement', {
+    const payload = {
       p_cash_register_id: register.id,
       p_type: type,
       p_description: description,
       p_amount: amount,
       p_payment_method: method,
       p_reason: reason || null,
-    });
+    };
+    const { error: movementError } = await supabase.rpc('record_cash_movement', { ...payload, p_request_id: operationId(movementRequest, payload) });
     if (movementError) { dialogAlert(movementError.message); return false; }
+    movementRequest.current = null;
     setMovementType(null);
     await load(true);
     return true;
@@ -345,17 +348,18 @@ function OpenRegisterModal({ onClose, onSubmit }: { onClose: () => void; onSubmi
   const [saving, setSaving] = useState(false);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     const amount = parseAmount(balance);
     if (!Number.isFinite(amount) || amount < 0) { dialogAlert('Informe um saldo inicial válido, igual ou maior que zero.'); return; }
     setSaving(true);
-    if (!await onSubmit(businessToday(), amount)) setSaving(false);
+    try { await onSubmit(businessToday(), amount); } catch { dialogAlert('Não foi possível abrir o caixa. Tente novamente.'); } finally { setSaving(false); }
   }
-  return <Modal open onClose={onClose} title="Abrir caixa" size="sm">
+  return <Modal open onClose={() => { if (!saving) onClose(); }} title="Abrir caixa" size="sm">
     <form onSubmit={submit} className="space-y-4">
       <Input label="Data" type="date" value={businessToday()} readOnly className={fieldClass} />
       <Input label="Saldo inicial em dinheiro (R$)" inputMode="decimal" value={balance} onChange={event => setBalance(event.target.value)} className={fieldClass} />
       <p className="text-xs text-slate-500 dark:text-slate-400">Informe o valor físico que já está no caixa. Será permitido apenas um caixa aberto por vez.</p>
-      <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Abrindo...' : 'Abrir caixa'}</Button></div>
+      <div className="flex justify-end gap-2"><Button variant="secondary" type="button" onClick={onClose} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Abrindo...' : 'Abrir caixa'}</Button></div>
     </form>
   </Modal>;
 }
@@ -369,6 +373,7 @@ function MovementModal({ type, canAdjust, onClose, onSubmit }: { type: MovementT
   const title = type === 'entrada' ? 'Registrar entrada' : type === 'saida' ? 'Registrar saída' : 'Ajustar caixa';
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     const parsed = parseAmount(amount);
     if (!description.trim() || !Number.isFinite(parsed) || parsed === 0 || (type !== 'ajuste' && parsed < 0)) {
       dialogAlert(type === 'ajuste' ? 'Informe uma descrição e um valor de ajuste diferente de zero.' : 'Informe uma descrição e um valor maior que zero.');
@@ -376,9 +381,9 @@ function MovementModal({ type, canAdjust, onClose, onSubmit }: { type: MovementT
     }
     if (type === 'ajuste' && (!canAdjust || !reason.trim())) { dialogAlert('Ajustes exigem permissão de administrador e motivo.'); return; }
     setSaving(true);
-    if (!await onSubmit(type, description.trim(), parsed, method, reason.trim())) setSaving(false);
+    try { await onSubmit(type, description.trim(), parsed, method, reason.trim()); } catch { dialogAlert('Não foi possível registrar o movimento. Tente novamente.'); } finally { setSaving(false); }
   }
-  return <Modal open onClose={onClose} title={title} size="sm">
+  return <Modal open onClose={() => { if (!saving) onClose(); }} title={title} size="sm">
     <form onSubmit={submit} className="space-y-4">
       {type === 'ajuste' && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Valor positivo acrescenta saldo; valor negativo reduz o saldo. O ajuste fica registrado no histórico.</div>}
       <Input label="Descrição *" value={description} onChange={event => setDescription(event.target.value)} required maxLength={200} placeholder={type === 'saida' ? 'Ex.: Combustível' : type === 'entrada' ? 'Ex.: Troco recebido' : 'Ex.: Correção de saldo'} className={fieldClass} />
@@ -387,7 +392,7 @@ function MovementModal({ type, canAdjust, onClose, onSubmit }: { type: MovementT
         {paymentMethods.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </Select>
       {type === 'ajuste' && <Textarea label="Motivo *" value={reason} onChange={event => setReason(event.target.value)} required maxLength={500} placeholder="Explique a correção realizada" className={fieldClass} />}
-      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button></div>
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Registrar'}</Button></div>
     </form>
   </Modal>;
 }
@@ -400,6 +405,7 @@ function CloseRegisterModal({ register, onClose, onSubmit }: { register: CashReg
   const difference = Number.isFinite(countedValue) ? Math.round((countedValue - register.expected_cash_live) * 100) / 100 : null;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     if (!Number.isFinite(countedValue) || countedValue < 0) { dialogAlert('Informe um valor contado válido, igual ou maior que zero.'); return; }
     if (difference !== 0 && !reason.trim()) { dialogAlert('Informe o motivo da diferença do caixa.'); return; }
     const confirmed = await dialogConfirm(
@@ -408,9 +414,9 @@ function CloseRegisterModal({ register, onClose, onSubmit }: { register: CashReg
     );
     if (!confirmed) return;
     setSaving(true);
-    if (!await onSubmit(countedValue, reason.trim())) setSaving(false);
+    try { await onSubmit(countedValue, reason.trim()); } catch { dialogAlert('Não foi possível fechar o caixa. Tente novamente.'); } finally { setSaving(false); }
   }
-  return <Modal open onClose={onClose} title="Fechar caixa" size="md">
+  return <Modal open onClose={() => { if (!saving) onClose(); }} title="Fechar caixa" size="md">
     <form onSubmit={submit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <SummaryCard label="Saldo inicial" amount={register.opening_balance} compact />
@@ -427,7 +433,7 @@ function CloseRegisterModal({ register, onClose, onSubmit }: { register: CashReg
         {difference === 0 ? <p className="mt-1">Caixa conferido. Nenhuma diferença encontrada.</p> : <p className="mt-1">Diferença = dinheiro contado − dinheiro esperado.</p>}
       </div>
       {difference !== null && difference !== 0 && <Textarea label="Motivo da diferença *" value={reason} onChange={event => setReason(event.target.value)} required maxLength={500} placeholder="Descreva o motivo da diferença" className={fieldClass} />}
-      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button><Button type="submit" variant="danger" disabled={saving}>{saving ? 'Fechando...' : 'Fechar caixa'}</Button></div>
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose} disabled={saving}>Cancelar</Button><Button type="submit" variant="danger" disabled={saving}>{saving ? 'Fechando...' : 'Fechar caixa'}</Button></div>
     </form>
   </Modal>;
 }

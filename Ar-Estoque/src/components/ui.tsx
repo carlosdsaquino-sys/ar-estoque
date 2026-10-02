@@ -1,3 +1,4 @@
+import { activateOverlay, isTopOverlay, releaseOverlay } from '@/lib/overlays';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
@@ -86,11 +87,11 @@ export function Modal({
     if (!open) return;
 
     const previousFocus = document.activeElement as HTMLElement | null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const overlay = activateOverlay();
     requestAnimationFrame(() => closeButtonRef.current?.focus());
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isTopOverlay(overlay)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();
@@ -119,9 +120,10 @@ export function Modal({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
+      const wasTop = isTopOverlay(overlay);
+      releaseOverlay(overlay);
       document.removeEventListener('keydown', handleKeyDown);
-      requestAnimationFrame(() => previousFocus?.focus());
+      if (wasTop) requestAnimationFrame(() => previousFocus?.focus());
     };
   }, [open]);
 

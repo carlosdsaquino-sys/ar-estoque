@@ -11,12 +11,14 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
+type RecentMovement = Omit<Movement, 'product'> & { product?: Pick<Product, 'name'> | null };
+
 interface DashboardData {
   activeProducts: number;
   totalStockValue: number;
   buyCount: number;
   okCount: number;
-  recentMovements: (Movement & { product?: Product })[];
+  recentMovements: RecentMovement[];
   replenishmentProducts: (Product & { balance: number })[];
   confirmedServices: number;
   totalServicesValue: number;
@@ -36,7 +38,7 @@ export default function Dashboard() {
     try {
       const [productsRes, movementsRes, servicesRes] = await Promise.all([
         allRows(() => supabase.from('products').select('*, category:categories(*), unit:units(*)').eq('is_active', true).order('id')).then(data => ({data,error:null})),
-        supabase.from('movements').select('*, product:products(*), client:clients(*), service:services(*)').order('created_at', { ascending: false }).limit(10),
+        supabase.from('movements').select('*, product:products(name)').order('created_at', { ascending: false, nullsFirst: false }).order('id', { ascending: false }).limit(10),
         allRows(() => supabase.from('services').select('*, client:clients(*)').order('id')).then(data => ({data,error:null})),
       ]);
 
@@ -45,7 +47,7 @@ export default function Dashboard() {
       if (servicesRes.error) throw servicesRes.error;
 
       const products = productsRes.data as Product[];
-      const movements = movementsRes.data as (Movement & { product?: Product })[];
+      const movements = movementsRes.data as RecentMovement[];
       const services = servicesRes.data as Service[];
 
       const balances = await loadBalances();
@@ -211,7 +213,7 @@ export default function Dashboard() {
                         {m.product?.name ?? 'Produto'}
                       </p>
                       <p className="text-xs text-slate-500">
-                        {movementTypeLabels[m.type] ?? m.type} - {formatNumber(Math.abs(m.quantity))} - {formatDate(m.created_at)}
+                        {movementTypeLabels[m.type] ?? m.type} - {formatNumber(m.quantity)} - {formatDate(m.created_at)}
                       </p>
                     </div>
                   </div>

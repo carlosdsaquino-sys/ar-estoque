@@ -19,6 +19,8 @@ export default function Movements() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const request = useRef<{payload:string;id:string}|null>(null);
+  const loadRevision = useRef(0);
+  useEffect(() => () => { loadRevision.current++; }, []);
   const [movements, setMovements] = useState<(Movement & { product?: Product; client?: Client })[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +34,7 @@ export default function Movements() {
   const [dateTo, setDateTo] = useState('');
 
   const loadMovements = useCallback(async () => {
+    const revision = ++loadRevision.current;
     setLoading(true);
     setError(null);
     try {
@@ -48,11 +51,11 @@ export default function Movements() {
       if (dateTo) query = query.lt('created_at', dateBoundary(dateTo, true));
 
       const data = await allRows(() => query);
-      setMovements(data as (Movement & { product?: Product; client?: Client })[]);
+      if (revision === loadRevision.current) setMovements(data as (Movement & { product?: Product; client?: Client })[]);
     } catch (err) {
-      setError(errorMessage(err));
+      if (revision === loadRevision.current) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
   }, [filterType, filterProduct, filterResponsible, dateFrom, dateTo]);
 

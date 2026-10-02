@@ -1,3 +1,4 @@
+import { activateOverlay, isTopOverlay, releaseOverlay } from '@/lib/overlays';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Button } from '@/components/ui';
@@ -115,9 +116,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       requestAnimationFrame(() => dialogRef.current?.querySelector<HTMLButtonElement>('[data-dialog-primary]')?.focus());
     }
 
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const overlay = activateOverlay(100);
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isTopOverlay(overlay)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         settle(active.kind === 'alert' ? null : active.kind === 'confirm' ? false : null);
@@ -138,7 +139,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.body.style.overflow = originalOverflow;
+      releaseOverlay(overlay);
       document.removeEventListener('keydown', handleKeyDown);
       if (!activeRef.current) {
         const target = previousFocus.current;

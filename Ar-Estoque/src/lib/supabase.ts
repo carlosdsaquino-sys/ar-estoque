@@ -178,6 +178,7 @@ export interface PerformedService {
 }
 
 export interface MaintenanceOverviewItem {
+  service_type_id: string | null;
   client_appliance_id: string;
   client_id: string;
   client_name: string;

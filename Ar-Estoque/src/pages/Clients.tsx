@@ -238,6 +238,7 @@ function ClientForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     if (!form.name.trim()) { dialogAlert('Nome é obrigatório'); return; }
     setSaving(true);
     await onSave(form);
@@ -245,14 +246,14 @@ function ClientForm({
   }
 
   return (
-    <Modal open={true} onClose={onClose} title={client ? 'Editar Cliente' : 'Novo Cliente'}>
+    <Modal open={true} onClose={() => { if (!saving) onClose(); }} title={client ? 'Editar Cliente' : 'Novo Cliente'}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input label="Nome *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
         <Input label="Telefone/WhatsApp" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(11) 99999-9999" />
         <Input label="Endereço" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Rua, número, bairro, cidade" />
         <Textarea label="Observações" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Cancelar</Button>
           <Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button>
         </div>
       </form>

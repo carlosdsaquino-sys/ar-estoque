@@ -106,6 +106,7 @@ function ServiceTypeForm({ type, onClose, onSaved }: { type: ServiceType | null;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     const normalizedPrice = price.trim() === '' ? NaN : Number(price.trim().replace(',', '.'));
     if (!name.trim() || !Number.isFinite(normalizedPrice) || normalizedPrice < 0) { dialogAlert('Informe nome e preço padrão válidos.'); return; }
     const interval = Number(maintenanceInterval);
@@ -130,7 +131,7 @@ function ServiceTypeForm({ type, onClose, onSaved }: { type: ServiceType | null;
     onSaved();
   }
 
-  return <Modal open onClose={onClose} title={type ? 'Editar tipo de serviço' : 'Novo tipo de serviço'} size="md">
+  return <Modal open onClose={() => { if (!saving) onClose(); }} title={type ? 'Editar tipo de serviço' : 'Novo tipo de serviço'} size="md">
     <form onSubmit={submit} className="space-y-4">
       <Input label="Nome *" value={name} onChange={event => setName(event.target.value)} required placeholder="Ex.: Limpeza de ar-condicionado" />
       <Textarea label="Descrição" value={description} onChange={event => setDescription(event.target.value)} placeholder="Descrição opcional" />
@@ -150,7 +151,7 @@ function ServiceTypeForm({ type, onClose, onSaved }: { type: ServiceType | null;
           <Input label="Avisar com antecedência (dias) *" type="number" min="0" step="1" value={maintenanceAlertDays} onChange={event => setMaintenanceAlertDays(event.target.value)} required />
         </div>}
       </section>
-      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></div>
+      <div className="flex justify-end gap-2"><Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</Button></div>
     </form>
   </Modal>;
 }

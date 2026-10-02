@@ -1,4 +1,10 @@
 const routeByPage: Record<string, string> = {
+  dashboard: '/dashboard',
+  clients: '/clientes',
+  cash: '/caixa',
+  users: '/usuarios',
+  appointments: '/agendamentos',
+  services: '/servicos',
   products: '/estoque/produtos',
   movements: '/estoque/movimentacoes',
   'service-types': '/estoque/tipos-de-servico',
@@ -15,7 +21,7 @@ const pageByRoute = Object.fromEntries(
 const knownPages = new Set([
   'dashboard', 'products', 'movements', 'service-types', 'clients', 'services', 'cash',
   'reports', 'report-movements', 'profit-report', 'import', 'users',
-  'maintenance-alerts',
+  'maintenance-alerts', 'appointments',
 ]);
 
 export function routeForPage(page: string): string | null {

@@ -3,7 +3,7 @@ import { balances as loadBalances } from '@/lib/data';
 import { dateBoundary } from '@/lib/utils';
 import { errorMessage } from '@/lib/utils';
 import { calculateMaterialCost, summarizeConfirmedProfits } from '@/lib/profit';
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { supabase, type Product, type Movement, type Service, type ServiceMaterial } from '@/lib/supabase';
 import { formatCurrency, formatNumber, formatDate, formatDateTime, movementTypeLabels, exportToCSV } from '@/lib/utils';
 import {
@@ -16,6 +16,8 @@ export type ReportsMode = 'general' | 'movements';
 
 export default function Reports({ mode = 'general' }: { mode?: ReportsMode }) {
   const tab = mode === 'general' ? 'products' : 'movements';
+  const loadRevision = useRef(0);
+  useEffect(() => () => { loadRevision.current++; }, []);
   const [products, setProducts] = useState<(Product & { category?: { name: string } | null; unit?: { name: string } | null; supplier?: { name: string } | null; balance: number; status: string })[]>([]);
   const [movements, setMovements] = useState<(Movement & { product?: Product; client?: { name: string } })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,13 +41,14 @@ export default function Reports({ mode = 'general' }: { mode?: ReportsMode }) {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
 
   const loadProducts = useCallback(async () => {
+    const revision = ++loadRevision.current;
     setLoading(true);
     setError(null);
     try {
       let query = supabase
         .from('products')
         .select('*, category:categories(*), unit:units(*), supplier:suppliers(*)')
-        .order('name');
+        .order('name').order('id');
 
       if (prodCategory) query = query.eq('category_id', prodCategory);
       if (prodSupplier) query = query.eq('supplier_id', prodSupplier);
@@ -69,15 +72,16 @@ export default function Reports({ mode = 'general' }: { mode?: ReportsMode }) {
       }
       if (prodStatus) filtered = filtered.filter((p) => p.status === prodStatus);
 
-      setProducts(filtered);
+      if (revision === loadRevision.current) setProducts(filtered);
     } catch (err) {
-      setError(errorMessage(err));
+      if (revision === loadRevision.current) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
   }, [prodSearch, prodCategory, prodSupplier, prodStatus]);
 
   const loadMovements = useCallback(async () => {
+    const revision = ++loadRevision.current;
     setLoading(true);
     setError(null);
     try {
@@ -94,11 +98,11 @@ export default function Reports({ mode = 'general' }: { mode?: ReportsMode }) {
       if (movDateTo) query = query.lt('created_at', dateBoundary(movDateTo,true));
 
       const data = await allRows(() => query);
-      setMovements(data as (Movement & { product?: Product; client?: { name: string } })[]);
+      if (revision === loadRevision.current) setMovements(data as (Movement & { product?: Product; client?: { name: string } })[]);
     } catch (err) {
-      setError(errorMessage(err));
+      if (revision === loadRevision.current) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (revision === loadRevision.current) setLoading(false);
     }
   }, [movType, movProduct, movResponsible, movDateFrom, movDateTo]);
 

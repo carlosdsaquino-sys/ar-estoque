@@ -17,6 +17,10 @@ for(const f of (await readdir('supabase/migrations')).sort()) {
             ('FERR-001','Chave de teste',5,15,'2020-01-02'),
             ('FERR-007','Alicate',8,24,'2020-01-03') RETURNING id,code,name,unit_price`)).rows;
   }
+  if (f === '20261001190000_service_actor_and_appointment_hours.sql') {
+    // Simulate a remote database whose older trigger still overwrites the technician.
+    await db.exec(`CREATE OR REPLACE FUNCTION public.set_service_actor() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$ BEGIN NEW.technician := (SELECT name FROM profiles WHERE id=auth.uid()); IF TG_OP='INSERT' THEN NEW.created_by := auth.uid(); END IF; RETURN NEW; END; $$;`);
+  }
   await db.exec(await readFile('supabase/migrations/'+f,'utf8'));
 }
 await db.exec('CREATE TABLE public.test_client_delete_guard(client_id uuid REFERENCES public.clients(id) ON DELETE RESTRICT); GRANT SELECT,INSERT,DELETE ON public.test_client_delete_guard TO authenticated;');
@@ -357,4 +361,134 @@ await as(op);
 await fails(()=>sql("INSERT INTO client_appliances(client_id,name) VALUES($1,'Sem permissão')",[client]),/row-level security policy/);
 await as(pending);equal(await sql('SELECT id FROM products'),[]);await fails(()=>balance(),/não autorizado/);
 await as(null);await fails(()=>balance(),/permission denied/);
+
+await as(admin);
+const appointmentType=(await sql("INSERT INTO service_types(name,default_price) VALUES('Tipo agenda',100) RETURNING id"))[0].id;
+const appointmentData={client_id:client,scheduled_date:'2026-10-01',scheduled_time:'08:00',technician:'Carlos',service_type_id:appointmentType,status:'agendado',notes:'Agenda'};
+const appointmentId=await rpc('save_appointment',[null,appointmentData,applianceForMaintenance,null]);
+equal((await sql('SELECT created_by,technician,status FROM appointments WHERE id=$1',[appointmentId]))[0],{created_by:admin,technician:'Carlos',status:'agendado'});
+equal((await sql('SELECT count(*)::integer n FROM appointment_appliances WHERE appointment_id=$1',[appointmentId]))[0].n,2);
+await fails(()=>rpc('save_appointment',[null,appointmentData,[applianceForMaintenance[0],applianceForMaintenance[0]],null]),/duplicado/);
+const foreignClient=(await sql("INSERT INTO clients(name) VALUES('Outro cliente agenda') RETURNING id"))[0].id;
+await fails(()=>rpc('save_appointment',[null,{...appointmentData,client_id:foreignClient},[applianceForMaintenance[0]],null]),/não pertence/);
+const agendaOperator='44444444-4444-4444-8444-444444444444';
+await db.exec('RESET ROLE');
+await sql("INSERT INTO auth.users(id) VALUES($1)",[agendaOperator]);
+await as(admin); await rpc('set_user_access',[agendaOperator,'operador',true]);
+await as(agendaOperator);
+await fails(()=>sql("UPDATE appointments SET status='concluido' WHERE id=$1",[appointmentId]),/permission denied/);
+await rpc('save_appointment',[appointmentId,{...appointmentData,scheduled_time:'09:00'},applianceForMaintenance,1]);
+equal((await sql('SELECT scheduled_time::text,version FROM appointments WHERE id=$1',[appointmentId]))[0],{scheduled_time:'09:00:00',version:2});
+await fails(()=>rpc('save_appointment',[appointmentId,appointmentData,applianceForMaintenance,1]),/outro usuário/);
+await fails(()=>rpc('save_appointment',[appointmentId,{...appointmentData,status:'concluido'},applianceForMaintenance,2]),/fluxo de serviços/);
+const cancelAppointment=await rpc('save_appointment',[null,appointmentData,[],null]);
+await rpc('save_appointment',[cancelAppointment,{...appointmentData,status:'cancelado'},[],1]);
+equal((await sql('SELECT status FROM appointments WHERE id=$1',[cancelAppointment]))[0].status,'cancelado');
+const appointmentVisit=[{client_appliance_id:applianceForMaintenance[0],notes:'',services:[{id:null,service_type_id:appointmentType,unit_price:100}],materials:[]}];
+const appointmentRequest=crypto.randomUUID();
+const appointmentService=await rpc('save_appointment_service',[appointmentId,null,{...visit,client_id:client},appointmentVisit,false,appointmentRequest,null]);
+equal((await sql('SELECT status,completed_service_id FROM appointments WHERE id=$1',[appointmentId]))[0],{status:'agendado',completed_service_id:appointmentService});
+equal(await rpc('save_appointment_service',[appointmentId,null,{...visit,client_id:client},appointmentVisit,false,appointmentRequest,null]),appointmentService);
+await rpc('confirm_service',[appointmentService]);
+equal((await sql('SELECT status FROM appointments WHERE id=$1',[appointmentId]))[0].status,'concluido');
+await rpc('cancel_service',[appointmentService,[]]);
+equal((await sql('SELECT status FROM appointments WHERE id=$1',[appointmentId]))[0].status,'concluido');
+equal((await sql("SELECT count(*)::integer n FROM service_history WHERE appointment_id=$1 AND action='conclusao'",[appointmentId]))[0].n,1);
+
+const hoursAppointment=await rpc('save_appointment',[null,{...appointmentData,duration_minutes:180},[applianceForMaintenance[0]],null]);
+equal((await sql('SELECT duration_minutes FROM appointments WHERE id=$1',[hoursAppointment]))[0].duration_minutes,180);
+await rpc('save_appointment',[hoursAppointment,{...appointmentData,duration_minutes:210},[applianceForMaintenance[0]],1]);
+equal((await sql('SELECT duration_minutes FROM appointments WHERE id=$1',[hoursAppointment]))[0].duration_minutes,210);
+for (const duration_minutes of [0,-30,60,179]) await fails(()=>rpc('save_appointment',[null,{...appointmentData,duration_minutes},[],null]),/pelo menos 3 horas/);
+await fails(()=>rpc('save_appointment',[hoursAppointment,{...appointmentData,duration_minutes:179},[],2]),/pelo menos 3 horas/);
+equal((await sql('SELECT duration_minutes,version FROM appointments WHERE id=$1',[hoursAppointment]))[0],{duration_minutes:210,version:2});
+// Legacy durations are not rewritten, and unrelated status changes remain possible.
+await db.exec('RESET ROLE; ALTER TABLE appointments DISABLE TRIGGER appointments_validate_duration;');
+const legacyAppointment=(await sql("INSERT INTO appointments(client_id,scheduled_date,scheduled_time,duration_minutes,created_by) VALUES($1,'2026-10-01','07:30',60,$2) RETURNING id",[client,admin]))[0].id;
+await db.exec('ALTER TABLE appointments ENABLE TRIGGER appointments_validate_duration;');
+await as(agendaOperator);
+await rpc('save_appointment',[legacyAppointment,{...appointmentData,status:'cancelado',duration_minutes:60},[],1]);
+equal((await sql('SELECT duration_minutes,status FROM appointments WHERE id=$1',[legacyAppointment]))[0],{duration_minutes:60,status:'cancelado'});
+const manualService=await rpc('save_service_visit',[null,{...visit,client_id:client,technician:'Queticia'},appointmentVisit,false,crypto.randomUUID(),null]);
+equal((await sql('SELECT technician,created_by FROM services WHERE id=$1',[manualService]))[0],{technician:'Queticia',created_by:agendaOperator});
+const manualVersion=(await sql('SELECT version FROM services WHERE id=$1',[manualService]))[0].version;
+await rpc('save_service_visit',[manualService,{...visit,client_id:client,technician:'Pedro'},appointmentVisit,false,crypto.randomUUID(),manualVersion]);
+equal((await sql('SELECT technician,created_by FROM services WHERE id=$1',[manualService]))[0],{technician:'Pedro',created_by:agendaOperator});
+await rpc('confirm_service',[manualService]);
+equal((await sql('SELECT technician FROM services WHERE id=$1',[manualService]))[0].technician,'Pedro');
+await as(pending);equal(await sql('SELECT id FROM appointments'),[]);await fails(()=>rpc('save_appointment',[null,appointmentData,[],null]),/não autorizado/);
+await as(null);await fails(()=>rpc('save_appointment',[null,appointmentData,[],null]),/permission denied/);
+
+
+await as(admin);
+const recentMovements=await sql(`SELECT m.id,m.created_at,m.type,m.quantity,p.name AS product_name FROM movements m LEFT JOIN products p ON p.id=m.product_id ORDER BY m.created_at DESC NULLS LAST,m.id DESC LIMIT 10`);
+equal(recentMovements.length,10);
+equal(new Set(recentMovements.map(m=>m.id)).size,recentMovements.length);
+equal(recentMovements.every((m,i)=>i===0 || new Date(recentMovements[i-1].created_at)>=new Date(m.created_at)),true);
+const correctionPairs=await sql(`SELECT original.id,original.quantity::float8 quantity,reversal.id AS reversal_id,reversal.quantity::float8 reversal_quantity FROM movements original JOIN movements reversal ON reversal.reversal_of=original.id WHERE original.type='saida' AND reversal.type='estorno'`);
+equal(correctionPairs.length>0,true);
+equal(correctionPairs.every(m=>m.id!==m.reversal_id && m.quantity===-m.reversal_quantity),true);
+
+{
+await as(admin);
+const auditProduct=await createProduct({name:'Material auditoria',unit_cost:2,unit_price:5});
+await rpc('register_movement',[auditProduct,'entrada',10,2,'','Auditoria',crypto.randomUUID()]);
+const auditType=(await sql("INSERT INTO service_types(name,default_price) VALUES('Tipo auditoria',50) RETURNING id"))[0].id;
+const auditClient=(await sql("INSERT INTO clients(name) VALUES('Cliente auditoria') RETURNING id"))[0].id;
+const auditDevice=(await sql("INSERT INTO client_appliances(client_id,name) VALUES($1,'Aparelho auditoria') RETURNING id",[auditClient]))[0].id;
+const auditData={client_id:auditClient,service_date:'2026-10-02',description:'Auditoria estoque',technician:'Carlos',discount:0,notes:''};
+const auditDevices=[{client_appliance_id:auditDevice,notes:'',services:[{id:null,service_type_id:auditType,unit_price:50}],materials:[{id:null,product_id:auditProduct,quantity:1,unit_price:5}]}];
+const auditRequest=crypto.randomUUID();
+const auditService=await rpc('save_service_visit',[null,auditData,auditDevices,true,auditRequest,null]);
+equal(await rpc('get_product_balance',[auditProduct]),9);
+equal(await rpc('save_service_visit',[null,auditData,auditDevices,true,auditRequest,null]),auditService);
+equal(await rpc('get_product_balance',[auditProduct]),9);
+async function auditServicePayload() {
+ const task=(await sql('SELECT ps.* FROM performed_services ps JOIN service_appliances sa ON sa.id=ps.appliance_id WHERE sa.service_id=$1',[auditService]))[0];
+ const material=(await sql('SELECT * FROM service_materials WHERE service_id=$1',[auditService]))[0];
+ return [{client_appliance_id:auditDevice,notes:'',services:[{id:task.id,service_type_id:task.service_type_id,unit_price:50}],materials:material?[{id:material.id,product_id:auditProduct,quantity:Number(material.quantity),unit_price:5}]:[]}];
+}
+async function auditEdit(devices) {
+ const version=(await sql('SELECT version FROM services WHERE id=$1',[auditService]))[0].version;
+ return rpc('save_service_visit',[auditService,auditData,devices,true,crypto.randomUUID(),version]);
+}
+await sql("UPDATE service_types SET name='Nome mestre atualizado' WHERE id=$1",[auditType]);
+await auditEdit(await auditServicePayload());
+equal(await rpc('get_product_balance',[auditProduct]),9);
+equal((await sql('SELECT name_snapshot FROM performed_services ps JOIN service_appliances sa ON sa.id=ps.appliance_id WHERE sa.service_id=$1',[auditService]))[0].name_snapshot,'Tipo auditoria');
+let editedDevices=await auditServicePayload();editedDevices[0].materials=[];
+await auditEdit(editedDevices);equal(await rpc('get_product_balance',[auditProduct]),10);
+editedDevices=await auditServicePayload();editedDevices[0].materials=[{id:null,product_id:auditProduct,quantity:1,unit_price:5}];
+await auditEdit(editedDevices);equal(await rpc('get_product_balance',[auditProduct]),9);
+const returnMaterial=(await sql('SELECT id FROM service_materials WHERE service_id=$1',[auditService]))[0].id;
+await rpc('cancel_service',[auditService,[returnMaterial]]);equal(await rpc('get_product_balance',[auditProduct]),10);
+const draftAudit=await rpc('save_service_visit',[null,auditData,auditDevices,false,crypto.randomUUID(),null]);
+await rpc('delete_draft_service',[draftAudit]);equal(await rpc('get_product_balance',[auditProduct]),10);
+const requestAppointment=crypto.randomUUID();
+const appointmentPayload={client_id:auditClient,scheduled_date:'2026-10-02',scheduled_time:'07:30',duration_minutes:180,technician:'Carlos',status:'agendado',service_type_id:auditType};
+const retryAppointment=await rpc('save_appointment',[null,appointmentPayload,[auditDevice],null,requestAppointment]);
+equal(await rpc('save_appointment',[null,appointmentPayload,[auditDevice],null,requestAppointment]),retryAppointment);
+await fails(()=>rpc('save_appointment',[null,{...appointmentPayload,technician:'Outro'},[auditDevice],null,requestAppointment]),/dados diferentes/);
+const linkedRequest=crypto.randomUUID();
+const linkedAudit=await rpc('save_appointment_service',[retryAppointment,null,auditData,auditDevices,false,linkedRequest,null]);
+equal(await rpc('save_appointment_service',[retryAppointment,null,auditData,auditDevices,false,linkedRequest,null]),linkedAudit);
+await fails(()=>rpc('save_appointment_service',[retryAppointment,null,{...auditData,technician:'João'},auditDevices,false,crypto.randomUUID(),null]),/já possui atendimento/);
+const archivedAppointment=await rpc('save_appointment',[null,appointmentPayload,[auditDevice],null,crypto.randomUUID()]);
+await rpc('set_client_archived',[auditClient,true]);await sql('UPDATE client_appliances SET is_active=false WHERE id=$1',[auditDevice]);
+await rpc('save_appointment',[archivedAppointment,{...appointmentPayload,status:'cancelado'},[auditDevice],1,crypto.randomUUID()]);
+equal((await sql('SELECT status FROM appointments WHERE id=$1',[archivedAppointment]))[0].status,'cancelado');
+// User deletion is local fixture deletion, never a production action.
+await db.exec('RESET ROLE');await sql('DELETE FROM auth.users WHERE id=$1',[agendaOperator]);await as(admin);
+equal((await sql('SELECT created_by,created_by_name FROM appointments WHERE id=$1',[appointmentId]))[0].created_by,admin);
+equal((await sql('SELECT created_by,created_by_name FROM appointments WHERE id=$1',[cancelAppointment]))[0],{created_by:null,created_by_name:'Usuário'});
+// Reopen only an isolated local fixture to exercise retry after closure.
+await db.exec('RESET ROLE');await sql("UPDATE cash_registers SET status='aberto',closing_balance=NULL,expected_cash=NULL,counted_cash=NULL,difference=NULL,closing_reason=NULL,closed_by=NULL,closed_by_name='',closed_at=NULL WHERE id=$1",[cashRegister]);await as(admin);
+const cashRequest=crypto.randomUUID();
+const cashRetry=await rpc('record_cash_movement',[cashRegister,'entrada','Auditoria idempotência',5,'dinheiro',null,cashRequest]);
+equal(await rpc('record_cash_movement',[cashRegister,'entrada','Auditoria idempotência',5,'dinheiro',null,cashRequest]),cashRetry);
+equal((await rpc('cash_register_snapshot',[cashRegister])).movements.filter(m=>m.id===cashRetry).length,1);
+await fails(()=>rpc('record_cash_movement',[cashRegister,'entrada','Auditoria idempotência',6,'dinheiro',null,cashRequest]),/dados diferentes/);
+const finalCash=await rpc('cash_register_snapshot',[cashRegister]);await rpc('close_cash_register',[cashRegister,finalCash.expected_cash_live,null]);
+equal(await rpc('record_cash_movement',[cashRegister,'entrada','Auditoria idempotência',5,'dinheiro',null,cashRequest]),cashRetry);
+}
 await db.close();console.log(`PASS: migrations and ${checks} database assertions (roles, atomic rollback, idempotency, corrections, payments, returns, import, preventive maintenance).`);

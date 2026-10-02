@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 import { routeForPage } from '@/lib/routes';
+import { useAppointments } from '@/context/AppointmentsContext';
 import { useMaintenance } from '@/context/MaintenanceContext';
 
 export type PageId =
@@ -36,6 +37,7 @@ export type PageId =
   | 'report-movements'
   | 'profit-report'
   | 'import'
+  | 'appointments'
   | 'maintenance-alerts'
   | 'users';
 
@@ -52,6 +54,7 @@ const items: {
   { id: 'clients', label: 'Clientes', icon: Users },
   { id: 'services', label: 'Serviços', icon: Wrench },
   { id: 'cash', label: 'Caixa', icon: Banknote },
+  { id: 'appointments', label: 'Agendamentos', icon: Bell },
   { id: 'maintenance-alerts', label: 'Avisos', icon: Bell },
   { id: 'reports', label: 'Relatórios', icon: FileBarChart },
   { id: 'import', label: 'Importar planilha', icon: Upload, adminOnly: true },
@@ -59,6 +62,7 @@ const items: {
 ];
 
 const stockPages: PageId[] = ['products', 'movements', 'service-types', 'import'];
+const servicePages: PageId[] = ['services', 'appointments'];
 const reportPages: PageId[] = ['reports', 'report-movements', 'profit-report'];
 const reportOptions: (typeof items[number])[] = [
   { id: 'reports', label: 'Relatórios gerais', icon: FileBarChart },
@@ -78,15 +82,19 @@ export default function Layout({
   const { profile, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { overdueCount } = useMaintenance();
+  const { todayCount, tomorrowCount } = useAppointments();
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [stockOpen, setStockOpen] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState('');
 
   const headerRef = useRef<HTMLElement>(null);
   const stockButtonRef = useRef<HTMLButtonElement>(null);
+  const servicesButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileServicesButtonRef = useRef<HTMLButtonElement>(null);
   const reportsButtonRef = useRef<HTMLButtonElement>(null);
   const mobileButtonRef = useRef<HTMLButtonElement>(null);
   const mobileReportsButtonRef = useRef<HTMLButtonElement>(null);
@@ -110,19 +118,22 @@ export default function Layout({
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-700';
 
   useEffect(() => {
-    if (!mobileOpen && !stockOpen && !reportsOpen) return;
+    if (!mobileOpen && !stockOpen && !reportsOpen && !servicesOpen) return;
 
     const closeOutside = (event: PointerEvent) => {
       if (!headerRef.current?.contains(event.target as Node)) {
         setMobileOpen(false);
         setStockOpen(false);
         setReportsOpen(false);
+        setServicesOpen(false);
       }
     };
 
     const closeEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (reportsOpen) {
+        if (servicesOpen) {
+          (mobileOpen ? mobileServicesButtonRef.current : servicesButtonRef.current)?.focus();
+        } else if (reportsOpen) {
           (mobileOpen ? mobileButtonRef.current : reportsButtonRef.current)?.focus();
         } else if (stockOpen) {
           stockButtonRef.current?.focus();
@@ -132,6 +143,7 @@ export default function Layout({
 
         setStockOpen(false);
         setReportsOpen(false);
+        setServicesOpen(false);
         setMobileOpen(false);
       }
     };
@@ -143,13 +155,14 @@ export default function Layout({
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeEscape);
     };
-  }, [mobileOpen, stockOpen, reportsOpen]);
+  }, [mobileOpen, stockOpen, reportsOpen, servicesOpen]);
 
   function navigate(page: PageId) {
     onNavigate(page);
     setMobileOpen(false);
     setStockOpen(false);
     setReportsOpen(false);
+    setServicesOpen(false);
   }
 
   async function logout() {
@@ -220,6 +233,7 @@ export default function Layout({
         )}
 
         {item.label}
+        {item.id === 'appointments' && todayCount + tomorrowCount > 0 && <span className="ml-0.5 rounded-full bg-blue-500 px-1.5 py-0.5 text-[10px] text-white">{todayCount + tomorrowCount}</span>}
         {item.id === 'maintenance-alerts' && overdueCount > 0 && <span className="ml-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">{overdueCount}</span>}
       </>;
 
@@ -246,6 +260,27 @@ export default function Layout({
         {contents}
       </button>
     );
+  }
+
+  function servicesDropdown(compact = false) {
+    return <div className={compact ? 'sm:col-span-2' : 'relative'}>
+      <button
+        ref={compact ? mobileServicesButtonRef : servicesButtonRef}
+        type="button"
+        aria-expanded={servicesOpen}
+        aria-controls={compact ? 'mobile-services-navigation' : 'services-navigation'}
+        onClick={() => { setServicesOpen(open => !open); setStockOpen(false); setReportsOpen(false); }}
+        className={`${focusStyle} flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-[14px] font-semibold tracking-[0.005em] transition-all duration-200 ${compact ? 'w-full text-left' : ''} ${servicePages.includes(current) ? 'bg-blue-500/25 text-white shadow-[inset_0_0_0_1px_rgba(147,197,253,0.20)]' : 'text-white/95 hover:bg-white/10 hover:text-white'}`}
+      >
+        {compact && <Wrench className="h-4 w-4 shrink-0 text-white/85" aria-hidden="true" />}
+        <span className={compact ? 'flex-1' : ''}>Serviços</span>
+        <ChevronDown className={`h-3.5 w-3.5 text-white/90 transition-transform duration-200 ${servicesOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {servicesOpen && <div
+        id={compact ? 'mobile-services-navigation' : 'services-navigation'}
+        className={`motion-dropdown ${compact ? 'mt-1 ml-3' : 'absolute left-0 top-full mt-2 w-56'} overflow-hidden rounded-[20px] border border-slate-300/25 bg-slate-700/65 dark:border-slate-500/20 dark:bg-slate-950/80 p-2 shadow-[0_16px_35px_rgba(15,23,42,0.30)] backdrop-blur-xl`}
+      >{visibleItems.filter(item => servicePages.includes(item.id)).map(item => navButton(item, true))}</div>}
+    </div>;
   }
 
   return (
@@ -348,6 +383,7 @@ export default function Layout({
                 onClick={() => {
                   setStockOpen(open => !open);
                   setReportsOpen(false);
+                  setServicesOpen(false);
                 }}
                 className={`
                   ${focusStyle}
@@ -426,9 +462,11 @@ export default function Layout({
                   item.id !== 'dashboard' &&
                   !stockPages.includes(item.id) &&
                   !reportPages.includes(item.id) &&
-                  (item.id === 'clients' || item.id === 'services' || item.id === 'cash' || item.id === 'maintenance-alerts')
+                  (item.id === 'clients' || item.id === 'cash' || item.id === 'maintenance-alerts')
               )
               .map(item => navButton(item))}
+
+            {servicesDropdown()}
 
             {/* RELATÓRIOS */}
             <div className="relative">
@@ -439,6 +477,7 @@ export default function Layout({
                 aria-controls="reports-navigation"
                 onClick={() => {
                   setReportsOpen(open => !open);
+                  setServicesOpen(false);
                   setStockOpen(false);
                 }}
                 className={`
@@ -566,6 +605,7 @@ export default function Layout({
                 setMobileOpen(open => !open);
                 setStockOpen(false);
                 setReportsOpen(false);
+                setServicesOpen(false);
               }}
               className={`
                 ${focusStyle}
@@ -610,7 +650,8 @@ export default function Layout({
               aria-label="Menu para telas menores"
               className="grid gap-1 sm:grid-cols-2"
             >
-              {visibleItems.filter(item => !reportPages.includes(item.id)).map(item => navButton(item, true))}
+              {visibleItems.filter(item => !reportPages.includes(item.id) && !servicePages.includes(item.id)).map(item => navButton(item, true))}
+              {servicesDropdown(true)}
               <div className="sm:col-span-2">
                 <button
                   ref={mobileReportsButtonRef}
@@ -619,6 +660,7 @@ export default function Layout({
                   aria-controls="mobile-reports-navigation"
                   onClick={() => {
                     setReportsOpen(open => !open);
+                  setServicesOpen(false);
                     setStockOpen(false);
                   }}
                   className={`

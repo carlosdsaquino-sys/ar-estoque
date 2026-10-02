@@ -56,8 +56,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionDay.current = null;
     clearSessionDay();
     try {
+      for (const key of ['ar-estoque-open-client', 'ar-estoque-new-maintenance-service', 'ar-estoque-new-appointment', 'ar-estoque-appointment-service']) sessionStorage.removeItem(key);
+    } catch { /* Storage may be unavailable; authentication still clears normally. */ }
+    try {
       await supabase.auth.signOut();
     } finally {
+      sessionUserId.current = null;
       setProfile(null);
       setSession(null);
       setLoading(false);
@@ -235,8 +239,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      return { error: error?.message ?? null };
+      const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      return { error: error?.message ?? (data.session ? null : 'Não foi possível confirmar a sessão. Tente novamente.') };
     } catch (error) {
       return { error: errorMessage(error) };
     }

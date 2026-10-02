@@ -382,8 +382,7 @@ function ProductForm({
         return;
       }
       const code = String(data);
-      reservedCode.current = code;
-      if (mounted) setForm(current => ({ ...current, code }));
+      if (mounted) { reservedCode.current = code; setForm(current => ({ ...current, code })); }
       else void supabase.rpc('release_product_code_reservation', { p_code: code });
     })();
     return () => {

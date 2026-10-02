@@ -3,7 +3,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Snowflake, Lock, Mail, Loader2, Moon, Sun } from 'lucide-react';
 import { useTheme } from '@/context/ThemeContext';
 
-export default function AuthPage() {
+export default function AuthPage({ onSignedIn }: { onSignedIn: () => void }) {
   const { signIn } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
@@ -28,6 +28,8 @@ export default function AuthPage() {
             ? 'E-mail ou senha incorretos.'
             : result.error
         );
+      } else {
+        onSignedIn();
       }
     } catch {
       setError('Não foi possível entrar. Tente novamente.');
